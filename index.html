@@ -239,6 +239,164 @@ function TrendRow({r30Val,ytdVal,higherBetter,fmt,label}){
   );
 }
 
+// ─── INSIGHT ENGINE ──────────────────────────────────────────────────────────
+function generateInsights(r, bench, r30R, ytdR) {
+  const insights = [];
+  const stdPct = r.std_pct * 100;
+  const otdPct = r.otd_pct * 100;
+  const falloutPct = r.fallout_rate * 100;
+  const nirPct = r.net_issue_rate * 100;
+  const gap = gapPts(r);
+  const lowSample = r.demo < 10;
+
+  if (lowSample) {
+    insights.push({ type: "caution", icon: "🔬", text: `Low sample size (${r.demo} demos) — treat these numbers with caution. Performance may look better or worse than reality.` });
+  }
+  if (stdPct >= 35 && falloutPct > (bench.fallout * 100) * 1.2) {
+    insights.push({ type: "warn", icon: "⚠️", text: `Strong close rate (${stdPct.toFixed(1)}%) but higher-than-average fallout (${falloutPct.toFixed(1)}%) — closing deals that aren't sticking. Quality coaching opportunity.` });
+  } else if (stdPct >= 35) {
+    insights.push({ type: "good", icon: "💪", text: `Strong close rate at ${stdPct.toFixed(1)}% — well above the 35% strong threshold. Converts demos into revenue consistently.` });
+  } else if (stdPct < 25) {
+    insights.push({ type: "bad", icon: "📉", text: `Close rate of ${stdPct.toFixed(1)}% is below the 25% floor. Demo-to-close conversion needs attention.` });
+  }
+  if (gap !== null && gap >= 12) {
+    insights.push({ type: "warn", icon: "🚨", text: `OTD% is ${gap}pp higher than STD% — rep closes well on the day but struggles in the full sales cycle. May be relying on pressure over process.` });
+  }
+  if (nirPct >= 80) {
+    insights.push({ type: "good", icon: "✅", text: `Excellent stick rate — ${nirPct.toFixed(1)}% of closes net issue. Deals are real and durable.` });
+  } else if (nirPct < 55 && r.otd_cnt >= 5) {
+    insights.push({ type: "bad", icon: "🔴", text: `Only ${nirPct.toFixed(1)}% of closes net issue. A large portion of "wins" aren't converting to revenue — investigate quality of close.` });
+  }
+  if (r.net_vol > bench.net_vol * 1.25) {
+    insights.push({ type: "good", icon: "🏆", text: `Top revenue producer — net volume of ${f$(r.net_vol)} is ${Math.round((r.net_vol / bench.net_vol - 1) * 100)}% above team average.` });
+  }
+  if (r30R && ytdR) {
+    const stdDelta = r30R.std_pct - ytdR.std_pct;
+    const volDelta = r30R.net_vol - ytdR.net_vol;
+    if (stdDelta >= 0.05 && volDelta > 0) {
+      insights.push({ type: "trend", icon: "🔥", text: `Improving trajectory — both close rate (+${(stdDelta*100).toFixed(1)}pp) and volume (${f$(volDelta)}) are up vs YTD baseline.` });
+    } else if (stdDelta <= -0.05 && volDelta < 0) {
+      insights.push({ type: "warn", icon: "❄️", text: `Declining trend — close rate is down ${(Math.abs(stdDelta)*100).toFixed(1)}pp and volume is down ${f$(Math.abs(volDelta))} vs YTD. Worth a conversation.` });
+    }
+  }
+  if (falloutPct < (bench.fallout * 100) * 0.7 && r.otd_cnt >= 5) {
+    insights.push({ type: "good", icon: "🎯", text: `Deal quality is excellent — fallout rate of ${falloutPct.toFixed(1)}% is well below team average. Closes are clean and durable.` });
+  }
+  return insights.slice(0, 3);
+}
+
+// ─── LEAD RECOMMENDATION ENGINE ──────────────────────────────────────────────
+function generateLeadRecommendation(repA, dataA, repB, dataB, teamAvgs) {
+  const score = (d) => {
+    let pts = 0;
+    // Net volume weight (20%) — primary revenue signal
+    if (d.net_vol > teamAvgs.net_vol * 1.1) pts += 3;
+    else if (d.net_vol > teamAvgs.net_vol * 0.9) pts += 2;
+    else pts += 1;
+    // STD% (close rate) — can they actually close?
+    if (d.std_pct >= 0.35) pts += 3;
+    else if (d.std_pct >= 0.25) pts += 2;
+    else pts += 0;
+    // NetStk% — does the revenue stick?
+    if (d.net_issue_rate >= 0.80) pts += 3;
+    else if (d.net_issue_rate >= 0.60) pts += 2;
+    else pts += 0;
+    // Fallout — penalize bad quality
+    if (d.fallout_rate < teamAvgs.fallout_rate * 0.8) pts += 2;
+    else if (d.fallout_rate > teamAvgs.fallout_rate * 1.3) pts -= 2;
+    // Avg deal — revenue per close matters
+    if (d.avg_deal > teamAvgs.avg_deal * 1.1) pts += 1;
+    return pts;
+  };
+
+  const ptsA = score(dataA);
+  const ptsB = score(dataB);
+  const diff = ptsA - ptsB;
+  const winner = diff > 0 ? repA : diff < 0 ? repB : null;
+  const winnerData = diff > 0 ? dataA : dataB;
+  const loserData = diff > 0 ? dataB : dataA;
+  const confidence = Math.abs(diff) >= 5 ? "Strong" : Math.abs(diff) >= 2 ? "Moderate" : "Marginal";
+  const reasons = [];
+
+  if (!winner) {
+    return { winner: null, confidence: "Tied", reasons: ["Performance metrics are too close to call. Consider availability, market fit, or recency."], ptsA, ptsB };
+  }
+
+  const wD = winnerData, lD = loserData;
+  if (wD.net_vol > lD.net_vol * 1.1) reasons.push(`Higher net volume (${f$(wD.net_vol)} vs ${f$(lD.net_vol)}) — proven revenue producer`);
+  if (wD.std_pct > lD.std_pct + 0.03) reasons.push(`Stronger close rate (${(wD.std_pct*100).toFixed(1)}% vs ${(lD.std_pct*100).toFixed(1)}%) — more likely to convert this lead`);
+  if (wD.net_issue_rate > lD.net_issue_rate + 0.05) reasons.push(`Better stick rate (${(wD.net_issue_rate*100).toFixed(1)}% vs ${(lD.net_issue_rate*100).toFixed(1)}%) — revenue is more likely to hold`);
+  if (wD.fallout_rate < lD.fallout_rate - 0.03) reasons.push(`Lower fallout (${(wD.fallout_rate*100).toFixed(1)}% vs ${(lD.fallout_rate*100).toFixed(1)}%) — cleaner deal quality`);
+  if (wD.avg_deal > lD.avg_deal * 1.1) reasons.push(`Higher avg deal size (${f$(wD.avg_deal)} vs ${f$(lD.avg_deal)}) — extracts more value per appointment`);
+  if (reasons.length === 0) reasons.push(`Marginally higher composite score across weighted metrics`);
+
+  return { winner, confidence, reasons: reasons.slice(0, 3), ptsA, ptsB };
+}
+
+// ─── INSIGHT BOX ─────────────────────────────────────────────────────────────
+function InsightBox({ insights }) {
+  if (!insights || insights.length === 0) return null;
+  const typeStyle = {
+    good:    { border: "rgba(74,222,128,.25)",  bg: "rgba(74,222,128,.06)",  dot: "#4ade80" },
+    bad:     { border: "rgba(248,113,113,.25)", bg: "rgba(248,113,113,.06)", dot: "#f87171" },
+    warn:    { border: "rgba(251,191,36,.25)",  bg: "rgba(251,191,36,.06)",  dot: "#fbbf24" },
+    caution: { border: "rgba(251,191,36,.2)",   bg: "rgba(251,191,36,.04)",  dot: "#fbbf24" },
+    trend:   { border: "rgba(56,189,248,.2)",   bg: "rgba(56,189,248,.05)",  dot: "#38bdf8" },
+  };
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 10, color: "#334155", letterSpacing: ".07em", marginBottom: 8, fontWeight: 700 }}>
+        💡 PERFORMANCE INSIGHTS
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+        {insights.map((ins, i) => {
+          const s = typeStyle[ins.type] || typeStyle.trend;
+          return (
+            <div key={i} style={{
+              background: s.bg, border: `1px solid ${s.border}`, borderRadius: 8,
+              padding: "9px 12px", display: "flex", gap: 10, alignItems: "flex-start"
+            }}>
+              <span style={{ fontSize: 15, flexShrink: 0, marginTop: 1 }}>{ins.icon}</span>
+              <span style={{ fontSize: 12, color: "#cbd5e1", lineHeight: 1.5 }}>{ins.text}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── METRIC CARD ─────────────────────────────────────────────────────────────
+function MetricCard({ label, explanation, value, color, threshold, showBar, barValue, barMax, teamAvg }) {
+  return (
+    <div style={{ background: "#0d1120", borderRadius: 8, padding: "10px 12px", border: `1px solid ${color}22`, position: "relative" }}>
+      <div style={{ fontSize: 9, color: "#475569", letterSpacing: ".06em", marginBottom: 2, fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1, marginBottom: 2 }}>{value}</div>
+      {explanation && <div style={{ fontSize: 10, color: "#475569", lineHeight: 1.4, marginBottom: showBar ? 6 : 0 }}>{explanation}</div>}
+      {showBar && barMax > 0 && (
+        <div style={{ position: "relative", height: 4, background: "#1e2a3a", borderRadius: 2, marginTop: 4 }}>
+          <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${Math.min(100, (barValue / barMax) * 100)}%`, background: color, borderRadius: 2 }} />
+          {teamAvg != null && <div style={{ position: "absolute", top: -3, left: `${Math.min(100, (teamAvg / barMax) * 100)}%`, width: 2, height: 10, background: "#475569", borderRadius: 1 }} />}
+        </div>
+      )}
+      {threshold && <div style={{ position: "absolute", top: 8, right: 10, fontSize: 9, color: color, opacity: 0.7, fontWeight: 700 }}>{threshold}</div>}
+    </div>
+  );
+}
+
+// ─── SECTION HEADER ──────────────────────────────────────────────────────────
+function SectionHeader({ icon, title, description, color = "#64748b" }) {
+  return (
+    <div style={{ marginBottom: 10, borderBottom: `1px solid ${color}22`, paddingBottom: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+        <span style={{ fontSize: 14 }}>{icon}</span>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#e2e8f0", letterSpacing: ".04em" }}>{title}</span>
+      </div>
+      {description && <div style={{ fontSize: 10, color: "#475569", marginTop: 3, marginLeft: 21 }}>{description}</div>}
+    </div>
+  );
+}
+
 // ─── TIER LINE CHART ────────────────────────────────────────────────────────
 function TierLineChart({rep,r30Data,ytdData}){
   const tierLines=useMemo(()=>{
@@ -371,58 +529,130 @@ function Scorecard({rep,r30Data,ytdData,history,onClose,teamAvgs,markets={}}){
     .filter(Boolean)
     .sort((a,b)=>new Date(a.date)-new Date(b.date));
 
+  // Metric color helpers
+  const stdColor=v=>v>=.35?"#4ade80":v>=.25?"#fbbf24":"#f87171";
+  const otdColor=v=>v>=.35?"#4ade80":v>=.25?"#fbbf24":"#f87171";
+  const falloutColor=v=>v<.15?"#4ade80":v<.25?"#fbbf24":"#f87171";
+  const nirColor=v=>v>=.80?"#4ade80":v>=.60?"#fbbf24":"#f87171";
+  const volColor=v=>v>=bench.net_vol?"#4ade80":"#94a3b8";
+  const dealColor=v=>v>=bench.avg_deal?"#4ade80":"#94a3b8";
+
+  const insights=generateInsights(r,bench,r30R,ytdR);
+  const gap=gapPts(r);
+  const gi=gapInfo(gap);
+
   return(
     <div onClick={e=>{if(e.target===e.currentTarget)onClose();}}
       style={{position:"fixed",inset:0,background:"rgba(0,0,0,.87)",zIndex:200,
         overflowY:"auto",padding:"12px 8px"}}>
       <div style={{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:12,
-        width:"100%",maxWidth:860,margin:"0 auto",animation:"slideIn .2s ease",padding:"16px 20px",
+        width:"100%",maxWidth:900,margin:"0 auto",animation:"slideIn .2s ease",padding:"20px 24px",
         position:"relative"}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+
+        {/* ── HEADER ── */}
+        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:18}}>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontWeight:800,fontSize:17,color:"#f1f5f9",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{rep}</div>
-            <div style={{display:"flex",gap:8,marginTop:3,flexWrap:"wrap",alignItems:"center"}}>
-              <span style={{color:tc,fontWeight:700,fontSize:12}}>{r.tier}</span>
-              <span style={{color:"#1e2a3a"}}>·</span>
-              <span style={{color:"#94a3b8",fontSize:12}}>Rank #{r.rank}</span>
+            <div style={{fontWeight:800,fontSize:20,color:"#f1f5f9",marginBottom:4}}>{rep}</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+              <span style={{color:tc,fontWeight:700,fontSize:13,background:`${tc}18`,padding:"2px 8px",borderRadius:20}}>{r.tier}</span>
+              <span style={{color:"#64748b",fontSize:12}}>Rank #{r.rank}</span>
               <span style={{color:"#1e2a3a"}}>·</span>
               <span style={{color:"#38bdf8",fontWeight:700,fontSize:12}}>Score {r.score?.toFixed(4)}</span>
               {markets[rep]&&<span style={{color:"#f59e0b",fontWeight:600,fontSize:11,
-                background:"rgba(245,158,11,.1)",padding:"1px 6px",borderRadius:4}}>🗺 {markets[rep]}</span>}
-              <span style={{color:"#334155",fontSize:11}}>vs company avg ({deduped.length} reps)</span>
+                background:"rgba(245,158,11,.1)",padding:"2px 8px",borderRadius:12}}>🗺 {markets[rep]}</span>}
+              <span style={{color:"#334155",fontSize:11}}>vs {deduped.length} active reps</span>
             </div>
           </div>
           <button onClick={onClose} style={{background:"rgba(255,255,255,.06)",border:"1px solid #1e2a3a",
-            color:"#e2e8f0",cursor:"pointer",fontSize:14,borderRadius:6,
-            padding:"4px 10px",fontWeight:700,marginLeft:12,flexShrink:0}}>✕ Close</button>
+            color:"#94a3b8",cursor:"pointer",fontSize:13,borderRadius:6,
+            padding:"5px 12px",fontWeight:600,marginLeft:12,flexShrink:0}}>✕ Close</button>
         </div>
 
-        <div style={{marginBottom:12}}>
-          <div style={{fontSize:10,color:"#334155",letterSpacing:".07em",marginBottom:6}}>CATEGORY GRADES vs COMPANY AVERAGE</div>
+        {/* ── INSIGHTS ── */}
+        <InsightBox insights={insights}/>
+
+        {/* ── GRADE STRIP ── */}
+        <div style={{marginBottom:16}}>
+          <SectionHeader icon="🏅" title="Category Grades" description="Each grade compares this rep to the company average" color="#6366f1"/>
           <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6}}>
-            {[["Output",grades.output,"Net Vol"],["Efficiency",grades.efficiency,"STD%"],
-              ["Fallout",grades.fallout,"Fallout%"],["Deal Size",grades.dealSize,"Avg Deal"],
-              ["Quality",grades.quality,"NetStk%"]].map(([cat,g,sub])=>(
-              <div key={cat} style={{background:"#080c14",borderRadius:8,padding:"8px 6px",textAlign:"center",border:`1px solid ${g.color}22`}}>
-                <div style={{fontSize:22,fontWeight:900,color:g.color,lineHeight:1}}>{g.grade}</div>
-                <div style={{fontSize:10,color:"#94a3b8",marginTop:2,fontWeight:600}}>{cat}</div>
-                <div style={{fontSize:9,color:"#334155",marginTop:1}}>{sub}</div>
+            {[
+              ["Revenue Output",grades.output,"Net Vol","Total net revenue produced"],
+              ["Closing Efficiency",grades.efficiency,"STD%","How often demos convert to closes"],
+              ["Deal Quality",grades.fallout,"Fallout%","How many closes actually stick"],
+              ["Deal Size",grades.dealSize,"Avg Deal","Revenue extracted per close"],
+              ["Stick Rate",grades.quality,"NetStk%","Closes that net-issue to revenue"],
+            ].map(([cat,g,sub,tip])=>(
+              <div key={cat} style={{background:"#080c14",borderRadius:8,padding:"10px 8px",textAlign:"center",
+                border:`1px solid ${g.color}30`,position:"relative",overflow:"hidden"}}>
+                <div style={{position:"absolute",inset:0,background:`${g.color}05`}}/>
+                <div style={{fontSize:26,fontWeight:900,color:g.color,lineHeight:1,marginBottom:2}}>{g.grade}</div>
+                <div style={{fontSize:10,color:"#cbd5e1",fontWeight:700,marginBottom:2}}>{cat}</div>
+                <div style={{fontSize:9,color:"#475569"}}>{sub}</div>
               </div>
             ))}
           </div>
         </div>
 
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-          <div style={{background:"#080c14",borderRadius:8,padding:12}}>
-            <div style={{fontSize:10,color:"#334155",letterSpacing:".07em",marginBottom:8}}>VS TEAM AVERAGE</div>
-            <MiniBar value={r.net_vol} teamAvg={teamAvgs.net_vol} max={teamAvgs.net_vol*3} color="#38bdf8" label="Net Volume" fmt={f$}/>
-            <MiniBar value={r.std_pct} teamAvg={teamAvgs.std_pct} max={1} color="#6366f1" label="STD%" fmt={fP}/>
-            <MiniBar value={r.avg_deal} teamAvg={teamAvgs.avg_deal} max={teamAvgs.avg_deal*2.5} color="#f59e0b" label="Avg Deal" fmt={f$}/>
-            <MiniBar value={r.net_issue_rate} teamAvg={teamAvgs.net_issue_rate} max={1} color="#4ade80" label="NetStk%" fmt={fP}/>
-            <MiniBar value={1-r.fallout_rate} teamAvg={1-teamAvgs.fallout_rate} max={1} color="#a78bfa" label="Clean Rate" fmt={fP}/>
+        {/* ── KEY METRICS CARDS ── */}
+        <div style={{marginBottom:16}}>
+          <SectionHeader icon="📊" title="Closing Efficiency" description="How well this rep converts opportunities into revenue" color="#6366f1"/>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:12}}>
+            <MetricCard label="STD%" explanation="Closes after demo sat" value={fP(r.std_pct)}
+              color={stdColor(r.std_pct)} threshold={r.std_pct>=.35?"✓ Strong":r.std_pct<.25?"⚠ Weak":"~ OK"}
+              showBar barValue={r.std_pct} barMax={.8} teamAvg={bench.std}/>
+            <MetricCard label="OTD%" explanation="On-the-day close rate" value={fP(r.otd_pct)}
+              color={otdColor(r.otd_pct)} threshold={r.otd_pct>=.35?"✓ Strong":r.otd_pct<.25?"⚠ Weak":"~ OK"}
+              showBar barValue={r.otd_pct} barMax={.7} teamAvg={companyAvg("otd_pct")}/>
+            <MetricCard label="OTD↔STD Gap" explanation="Higher gap = pressure-based closes" value={gap!=null?gi.label:"—"}
+              color={gi.color} threshold={gap>=12?"🚨 Watch":gap>=6?"👀 Flag":"✓ Clean"}/>
+            <MetricCard label="Demos Sat" explanation="Sample size for reliability" value={fN(r.demo)}
+              color={r.demo>=20?"#4ade80":r.demo>=10?"#fbbf24":"#94a3b8"}
+              threshold={r.demo>=20?"✓ Reliable":r.demo<10?"⚠ Low N":"~ OK"}/>
           </div>
-          <div style={{background:"#080c14",borderRadius:8,padding:12}}>
-            <div style={{fontSize:10,color:"#334155",letterSpacing:".07em",marginBottom:8}}>KEY RATES</div>
+        </div>
+
+        <div style={{marginBottom:16}}>
+          <SectionHeader icon="💰" title="Revenue Production" description="Volume and value of deals closed" color="#38bdf8"/>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+            <MetricCard label="Net Volume" explanation="Total revenue that sticks" value={f$(r.net_vol)}
+              color={volColor(r.net_vol)} showBar barValue={r.net_vol} barMax={bench.net_vol*3} teamAvg={bench.net_vol}/>
+            <MetricCard label="Avg Deal Size" explanation="Revenue extracted per close" value={f$(r.avg_deal)}
+              color={dealColor(r.avg_deal)} showBar barValue={r.avg_deal} barMax={bench.avg_deal*2.5} teamAvg={bench.avg_deal}/>
+            <MetricCard label="NSLI/NCP" explanation="Net service & install revenue" value={f$(r.nsli)}
+              color="#a78bfa"/>
+            <MetricCard label="Gross Issued" explanation="Total appointments closed" value={fN(r.gross_iss)}
+              color="#64748b"/>
+          </div>
+        </div>
+
+        <div style={{marginBottom:16}}>
+          <SectionHeader icon="🛡️" title="Deal Quality & Risk" description="How clean and durable this rep's business is" color="#f97316"/>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+            <MetricCard label="Fallout%" explanation="Deals lost after closing" value={fP(r.fallout_rate)}
+              color={falloutColor(r.fallout_rate)} threshold={r.fallout_rate<.15?"✓ Clean":r.fallout_rate>.25?"⚠ High":"~ OK"}
+              showBar barValue={r.fallout_rate} barMax={.5} teamAvg={bench.fallout}/>
+            <MetricCard label="NetStk%" explanation="Closes that become installs" value={fP(r.net_issue_rate)}
+              color={nirColor(r.net_issue_rate)} threshold={r.net_issue_rate>=.80?"✓ Strong":r.net_issue_rate<.60?"⚠ Low":"~ OK"}
+              showBar barValue={r.net_issue_rate} barMax={1} teamAvg={bench.nir}/>
+            <MetricCard label="Cancel Rate" explanation="Deals that cancelled" value={fP(r.cancel_rate)}
+              color={r.cancel_rate<.1?"#4ade80":r.cancel_rate>.2?"#f87171":"#fbbf24"}/>
+            <MetricCard label="Hold Rate" explanation="Deals currently on hold" value={fP(r.hold_rate)}
+              color={r.hold_rate<.08?"#4ade80":r.hold_rate>.15?"#f87171":"#fbbf24"}/>
+          </div>
+        </div>
+
+        {/* ── VS TEAM BARS + DONUTS ── */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+          <div style={{background:"#080c14",borderRadius:8,padding:14}}>
+            <SectionHeader icon="📏" title="vs Team Average" description="Gray tick = team average" color="#475569"/>
+            <MiniBar value={r.net_vol} teamAvg={teamAvgs.net_vol} max={teamAvgs.net_vol*3} color="#38bdf8" label="Net Volume" fmt={f$}/>
+            <MiniBar value={r.std_pct} teamAvg={teamAvgs.std_pct} max={1} color="#6366f1" label="STD% — Close Rate" fmt={fP}/>
+            <MiniBar value={r.avg_deal} teamAvg={teamAvgs.avg_deal} max={teamAvgs.avg_deal*2.5} color="#f59e0b" label="Avg Deal Size" fmt={f$}/>
+            <MiniBar value={r.net_issue_rate} teamAvg={teamAvgs.net_issue_rate} max={1} color="#4ade80" label="NetStk% — Stick Rate" fmt={fP}/>
+            <MiniBar value={1-r.fallout_rate} teamAvg={1-teamAvgs.fallout_rate} max={1} color="#a78bfa" label="Clean Rate (inverse fallout)" fmt={fP}/>
+          </div>
+          <div style={{background:"#080c14",borderRadius:8,padding:14}}>
+            <SectionHeader icon="🔵" title="Rate Breakdown" description="Donut shows % of max benchmark" color="#475569"/>
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6}}>
               <Donut value={r.std_pct} max={.8} color="#6366f1" label="STD%"/>
               <Donut value={r.otd_pct} max={.7} color="#38bdf8" label="OTD%"/>
@@ -434,31 +664,31 @@ function Scorecard({rep,r30Data,ytdData,history,onClose,teamAvgs,markets={}}){
           </div>
         </div>
 
+        {/* ── R30 VS YTD TREND ── */}
         {r30R&&ytdR&&(
-          <div style={{background:"#080c14",borderRadius:8,padding:12,marginBottom:10}}>
-            <div style={{fontSize:10,color:"#334155",letterSpacing:".07em",marginBottom:8}}>R30 vs YTD TREND</div>
+          <div style={{background:"#080c14",borderRadius:8,padding:14,marginBottom:14}}>
+            <SectionHeader icon="📈" title="R30 vs YTD — Momentum" description="Is this rep improving or declining vs their full-year baseline?" color="#38bdf8"/>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
               <TrendRow r30Val={r30R.net_vol} ytdVal={ytdR.net_vol} higherBetter={true} fmt={f$} label="Net Volume"/>
-              <TrendRow r30Val={r30R.std_pct} ytdVal={ytdR.std_pct} higherBetter={true} fmt={fP} label="STD%"/>
+              <TrendRow r30Val={r30R.std_pct} ytdVal={ytdR.std_pct} higherBetter={true} fmt={fP} label="STD% — Close Rate"/>
               <TrendRow r30Val={r30R.otd_pct} ytdVal={ytdR.otd_pct} higherBetter={true} fmt={fP} label="OTD%"/>
-              <TrendRow r30Val={r30R.avg_deal} ytdVal={ytdR.avg_deal} higherBetter={true} fmt={f$} label="Avg Deal"/>
-              <TrendRow r30Val={r30R.fallout_rate} ytdVal={ytdR.fallout_rate} higherBetter={false} fmt={fP} label="Fallout%"/>
-              <TrendRow r30Val={r30R.net_issue_rate} ytdVal={ytdR.net_issue_rate} higherBetter={true} fmt={fP} label="NetStk%"/>
-              <TrendRow r30Val={gapPts(r30R)} ytdVal={gapPts(ytdR)} higherBetter={false} fmt={v=>`${v}pp`} label="OTD↔STD Gap"/>
+              <TrendRow r30Val={r30R.avg_deal} ytdVal={ytdR.avg_deal} higherBetter={true} fmt={f$} label="Avg Deal Size"/>
+              <TrendRow r30Val={r30R.fallout_rate} ytdVal={ytdR.fallout_rate} higherBetter={false} fmt={fP} label="Fallout% — lower is better"/>
+              <TrendRow r30Val={r30R.net_issue_rate} ytdVal={ytdR.net_issue_rate} higherBetter={true} fmt={fP} label="NetStk% — Stick Rate"/>
+              <TrendRow r30Val={gapPts(r30R)} ytdVal={gapPts(ytdR)} higherBetter={false} fmt={v=>`${v}pp`} label="OTD↔STD Gap — lower is better"/>
               <TrendRow r30Val={r30R.score} ytdVal={ytdR.score} higherBetter={true} fmt={v=>v?.toFixed(4)} label="Overall Score"/>
             </div>
           </div>
         )}
 
+        {/* ── HISTORICAL TREND ── */}
         {repHistory.length>=2&&(
           <div style={{background:"#080c14",borderRadius:10,padding:14,marginBottom:16}}>
-            <div style={{fontSize:10,color:"#334155",letterSpacing:".07em",marginBottom:10}}>
-              HISTORICAL TREND — {repHistory.length} snapshots
-            </div>
+            <SectionHeader icon="🕒" title={`Historical Trend — ${repHistory.length} Snapshots`} description="Based on uploaded R30 snapshots over time" color="#a78bfa"/>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:10}}>
               {[
-                {label:"STD%",key:"std_pct",fmt:fP,color:"#6366f1"},
-                {label:"Net Vol",key:"net_vol",fmt:fK,color:"#38bdf8"},
+                {label:"STD% — Close Rate",key:"std_pct",fmt:fP,color:"#6366f1"},
+                {label:"Net Volume",key:"net_vol",fmt:fK,color:"#38bdf8"},
                 {label:"Fallout%",key:"fallout_rate",fmt:fP,color:"#f97316"},
                 {label:"Avg Deal",key:"avg_deal",fmt:fK,color:"#f59e0b"},
               ].map(m=>{
@@ -486,21 +716,34 @@ function Scorecard({rep,r30Data,ytdData,history,onClose,teamAvgs,markets={}}){
 
         <TierLineChart rep={r} r30Data={r30Data} ytdData={ytdData}/>
 
-        <div style={{marginTop:10}}>
-          <div style={{fontSize:10,color:"#334155",letterSpacing:".07em",marginBottom:6}}>FULL STATS ({r30R?"R30":"YTD"})</div>
+        {/* ── FULL RAW STATS ── */}
+        <div style={{marginTop:14}}>
+          <SectionHeader icon="📋" title={`Full Stats (${r30R?"Rolling 30":"Year to Date"})`} description="Raw numbers underlying all calculations above" color="#475569"/>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(110px,1fr))",gap:5}}>
-            {[["Demos Sat",fN(r.demo)],["Gross Iss",fN(r.gross_iss)],["OTD Closes",fN(r.otd_cnt)],
-              ["Net Closes",fN(r.num_net)],["NetStk%",fP(r.net_issue_rate)],["Close Vol",f$(r.close_vol)],
-              ["Net Vol",f$(r.net_vol)],["Avg Deal",f$(r.avg_deal)],["NSLI/NCP",f$(r.nsli)],
-              ["Cancels",fN(r.cancel_cnt)],["Holds",fN(r.hold_cnt)],["Cr Declines",fN(r.crdecline_cnt)],
-              ["Working",fN(r.working_cnt)]].map(([l,v])=>(
-              <div key={l} style={{background:"#080c14",borderRadius:6,padding:"6px 9px",border:"1px solid #1e2a3a"}}>
-                <div style={{fontSize:9,color:"#334155",marginBottom:1}}>{l}</div>
+            {[
+              ["Demos Sat",fN(r.demo),"Appointments sat"],
+              ["Gross Issued",fN(r.gross_iss),"Total closes"],
+              ["OTD Closes",fN(r.otd_cnt),"Same-day closes"],
+              ["Net Closes",fN(r.num_net),"Net issued closes"],
+              ["NetStk%",fP(r.net_issue_rate),"Stick rate"],
+              ["Close Vol",f$(r.close_vol),"Gross close volume"],
+              ["Net Vol",f$(r.net_vol),"Net revenue"],
+              ["Avg Deal",f$(r.avg_deal),"Revenue per close"],
+              ["NSLI/NCP",f$(r.nsli),"Service & install rev"],
+              ["Cancels",fN(r.cancel_cnt),"Post-close cancels"],
+              ["Holds",fN(r.hold_cnt),"Deals on hold"],
+              ["Cr Declines",fN(r.crdecline_cnt),"Credit declines"],
+              ["Working",fN(r.working_cnt),"In-flight deals"],
+            ].map(([l,v,tip])=>(
+              <div key={l} style={{background:"#080c14",borderRadius:6,padding:"7px 10px",border:"1px solid #1e2a3a"}}
+                title={tip}>
+                <div style={{fontSize:9,color:"#334155",marginBottom:2,letterSpacing:".04em"}}>{l}</div>
                 <div style={{fontWeight:700,color:"#e2e8f0",fontSize:12}}>{v}</div>
               </div>
             ))}
           </div>
         </div>
+
       </div>
     </div>
   );
@@ -580,26 +823,30 @@ function TrendsTab({r30Data,ytdData,history,onOpenScorecard}){
           <div style={{fontWeight:700,fontSize:13,color:"#4ade80",marginBottom:12}}>🔥 HEATING UP — Top 5</div>
           {top5.map((r,i)=>{
             const cl=compositeLabel(r.composite);
+            const stdDelta=r.r30R.std_pct-r.ytdR.std_pct;
+            const volDelta=r.r30R.net_vol-r.ytdR.net_vol;
             return(
               <div key={r.rep} onClick={()=>onOpenScorecard(r.rep)}
-                style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",
-                  borderRadius:7,cursor:"pointer",marginBottom:5,
-                  background:i%2===0?"#080c14":"#0a0f1a"}}>
-                <span style={{fontSize:18,minWidth:24}}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":"  "}</span>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9"}}>{r.rep}</div>
-                  <div style={{fontSize:11,color:TC[r.tier]??"#64748b"}}>{r.tier}</div>
-                </div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{color:cl.color,fontWeight:700,fontSize:12}}>{cl.text}</div>
-                  <div style={{fontSize:10,color:"#334155"}}>Score: {r.composite>0?"+":""}{r.composite}</div>
-                </div>
-                {r.rankDelta!=null&&(
-                  <div style={{color:r.rankDelta>0?"#4ade80":r.rankDelta<0?"#f87171":"#64748b",
-                    fontWeight:700,fontSize:12,minWidth:36,textAlign:"right"}}>
-                    {r.rankDelta>0?`▲${r.rankDelta}`:r.rankDelta<0?`▼${Math.abs(r.rankDelta)}`:"—"}
+                style={{padding:"10px 12px",borderRadius:8,cursor:"pointer",marginBottom:6,
+                  background:i%2===0?"#080c14":"#0a0f1a",border:"1px solid #1e2a3a"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
+                  <span style={{fontSize:16,minWidth:20}}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":"🔥"}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9"}}>{r.rep}</div>
+                    <div style={{fontSize:10,color:TC[r.tier]??"#64748b"}}>{r.tier}</div>
                   </div>
-                )}
+                  <div style={{textAlign:"right"}}>
+                    <div style={{color:cl.color,fontWeight:700,fontSize:11}}>{cl.text}</div>
+                    {r.rankDelta!=null&&<div style={{color:r.rankDelta>0?"#4ade80":"#f87171",fontSize:10,fontWeight:700}}>
+                      {r.rankDelta>0?`▲${r.rankDelta} ranks`:`▼${Math.abs(r.rankDelta)} ranks`}
+                    </div>}
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",fontSize:10}}>
+                  {stdDelta>0.02&&<span style={{color:"#4ade80",background:"rgba(74,222,128,.1)",padding:"2px 6px",borderRadius:4}}>STD% +{(stdDelta*100).toFixed(1)}pp</span>}
+                  {volDelta>0&&<span style={{color:"#38bdf8",background:"rgba(56,189,248,.1)",padding:"2px 6px",borderRadius:4}}>Vol +{f$(volDelta)}</span>}
+                  {r.r30R.net_issue_rate>=.80&&<span style={{color:"#a78bfa",background:"rgba(167,139,250,.1)",padding:"2px 6px",borderRadius:4}}>✓ Clean</span>}
+                </div>
               </div>
             );
           })}
@@ -1146,6 +1393,75 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
                 </table>
               </div>
             </div>
+          </div>
+        );
+      })()}
+
+      {/* ── LEAD RECOMMENDATION (rep mode, exactly 2 reps) ── */}
+      {mode==="rep"&&selectedItems.length===2&&(()=>{
+        const dA=activeReps.find(r=>r.rep===selectedItems[0]);
+        const dB=activeReps.find(r=>r.rep===selectedItems[1]);
+        if(!dA||!dB)return null;
+        const teamAvgObj={
+          net_vol:activeReps.reduce((a,r)=>a+r.net_vol,0)/activeReps.length,
+          std_pct:activeReps.reduce((a,r)=>a+r.std_pct,0)/activeReps.length,
+          net_issue_rate:activeReps.reduce((a,r)=>a+r.net_issue_rate,0)/activeReps.length,
+          fallout_rate:activeReps.reduce((a,r)=>a+r.fallout_rate,0)/activeReps.length,
+          avg_deal:activeReps.reduce((a,r)=>a+r.avg_deal,0)/activeReps.length,
+        };
+        const rec=generateLeadRecommendation(selectedItems[0],dA,selectedItems[1],dB,teamAvgObj);
+        const confColor=rec.confidence==="Strong"?"#4ade80":rec.confidence==="Moderate"?"#fbbf24":"#94a3b8";
+        const winnerIdx=selectedItems.indexOf(rec.winner);
+        const winnerColor=rec.winner?COLORS[winnerIdx]:"#94a3b8";
+        return(
+          <div style={{marginTop:20,background:"#0d1120",border:`1px solid ${winnerColor}44`,borderRadius:12,padding:20,position:"relative",overflow:"hidden"}}>
+            <div style={{position:"absolute",inset:0,background:`linear-gradient(135deg,${winnerColor}06 0%,transparent 60%)`,pointerEvents:"none"}}/>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+              <span style={{fontSize:22}}>🎯</span>
+              <div>
+                <div style={{fontWeight:800,fontSize:15,color:"#f1f5f9"}}>Lead Recommendation</div>
+                <div style={{fontSize:11,color:"#475569"}}>Based on net volume, close rate, stick rate, deal quality, and fallout — weighted to maximize netting business</div>
+              </div>
+            </div>
+            {rec.winner?(
+              <>
+                <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14,padding:"14px 16px",
+                  background:`${winnerColor}12`,border:`1px solid ${winnerColor}30`,borderRadius:10}}>
+                  <div style={{fontSize:32}}>🏆</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:11,color:"#64748b",letterSpacing:".07em",marginBottom:2}}>GIVE THE NEXT LEAD TO</div>
+                    <div style={{fontWeight:900,fontSize:20,color:winnerColor}}>{rec.winner}</div>
+                    <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{activeReps.find(r=>r.rep===rec.winner)?.tier} · Score {activeReps.find(r=>r.rep===rec.winner)?.score?.toFixed(4)}</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:10,color:"#475569",marginBottom:3}}>Confidence</div>
+                    <div style={{fontWeight:800,fontSize:14,color:confColor}}>{rec.confidence}</div>
+                    <div style={{fontSize:10,color:"#475569",marginTop:3}}>Score gap: {Math.abs(rec.ptsA-rec.ptsB)} pts</div>
+                  </div>
+                </div>
+                <div style={{marginBottom:10}}>
+                  <div style={{fontSize:10,color:"#475569",letterSpacing:".07em",marginBottom:8,fontWeight:700}}>WHY THIS REP?</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {rec.reasons.map((reason,i)=>(
+                      <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start",
+                        background:"rgba(255,255,255,.03)",borderRadius:7,padding:"8px 12px",
+                        border:"1px solid rgba(255,255,255,.06)"}}>
+                        <span style={{color:winnerColor,fontWeight:800,fontSize:13,flexShrink:0}}>→</span>
+                        <span style={{fontSize:12,color:"#cbd5e1",lineHeight:1.5}}>{reason}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div style={{fontSize:10,color:"#334155",padding:"8px 10px",background:"#080c14",borderRadius:6,
+                  border:"1px solid #1e2a3a",lineHeight:1.5}}>
+                  ⚖ This recommendation is data-driven and weighted toward netting business (stick rate + close rate + fallout). It does not account for availability, territory, or recent wins. Use as a signal, not a directive.
+                </div>
+              </>
+            ):(
+              <div style={{textAlign:"center",padding:"20px 0",color:"#64748b",fontSize:13}}>
+                {rec.reasons[0]}
+              </div>
+            )}
           </div>
         );
       })()}
