@@ -34,7 +34,7 @@ const db={
 };
 
 // ─── WEIGHTS ─────────────────────────────────────────────────────────────────
-const W={net_vol:.20,nsli:.12,net_iss:.08,otd:.12,std:.12,close:.06,cancel:.13,hold:.05,crdecl:.02,gross:.10}; // Fallout: Cancel 65% · Hold 25% · CrDecl 10%
+const W={net_vol:.20,nsli:.12,net_iss:.08,otd:.12,std:.12,close:.06,cancel:.13,hold:.05,crdecl:.02,gross:.10};
 const CONF=d=>d<3?0:d<5?.35:d<10?.6:d<20?.8:1;
 const TIERS=[
   {label:"🥇 Elite",min:.80,color:"#f59e0b"},
@@ -46,11 +46,10 @@ const TIERS=[
 const TC={"🥇 Elite":"#f59e0b","🥈 Strong":"#94a3b8","🥉 Average":"#cd7f32","⚠ Below Avg":"#f97316","🔴 Low":"#ef4444","⛔ Excluded":"#6b7280"};
 
 // ─── MOMENTUM SIGNALS ────────────────────────────────────────────────────────
-// Returns signal based on % change between two values
 const signal=(r30,ytd,higherBetter)=>{
   if(r30==null||ytd==null||ytd===0)return{s:0,label:"➡ Stable",color:"#64748b",icon:"➡"};
   const delta=(r30-ytd)/Math.abs(ytd);
-  const d=higherBetter?delta:-delta; // positive d = improvement
+  const d=higherBetter?delta:-delta;
   if(d>=.15) return{s:2,label:"🔥 Hot",   color:"#4ade80",icon:"🔥"};
   if(d>=.05) return{s:1,label:"📈 Rising", color:"#86efac",icon:"📈"};
   if(d>-.05) return{s:0,label:"➡ Stable", color:"#64748b",icon:"➡"};
@@ -139,8 +138,6 @@ function processCSV(text,win){
     const cancel_rate=otd_cnt>0?cancel_cnt/otd_cnt:0;
     const hold_rate=otd_cnt>0?hold_cnt/otd_cnt:0;
     const crdecl_rate=otd_cnt>0?crdecline_cnt/otd_cnt:0;
-    // Weighted fallout: Cancels 65% · Holds 25% · CrDeclines 10%
-    const raw_fallout_rate=otd_cnt>0?(cancel_cnt+hold_cnt+crdecline_cnt)/otd_cnt:0;
     const fallout_rate=otd_cnt>0?(cancel_cnt*0.65+hold_cnt*0.25+crdecline_cnt*0.10)/otd_cnt:0;
     const net_issue_rate=otd_cnt>0?num_net/otd_cnt:0;
     return{
@@ -280,8 +277,7 @@ function TierLineChart({rep,r30Data,ytdData}){
   if(!tierLines.length)return null;
   return(
     <div style={{marginTop:18,background:"#080c14",borderRadius:10,padding:14}}>
-      <div style={{fontSize:11,color:"#334155",letterSpacing:".07em",marginBottom:2}}>PERFORMANCE vs TIER BASELINES — live from uploaded data</div>
-      <div style={{fontSize:10,color:"#1e3a5f",marginBottom:10}}>Tier averages computed from all reps · Fallout% inverted — higher = better</div>
+      <div style={{fontSize:11,color:"#334155",letterSpacing:".07em",marginBottom:2}}>PERFORMANCE vs TIER BASELINES</div>
       <div style={{overflowX:"auto"}}>
         <svg width={W2} height={H} style={{display:"block",minWidth:W2}}>
           {[0,.25,.5,.75,1].map(v=>(
@@ -356,7 +352,6 @@ function Scorecard({rep,r30Data,ytdData,history,onClose,teamAvgs,markets={}}){
   if(!r)return null;
   const tc=TC[r.tier]??"#64748b";
 
-  // Build benchmarks from COMPANY-WIDE average (all active reps)
   const seen=new Set();const deduped=[];
   for(const x of (r30Data?.reps||[]).filter(x=>x.tier!=="⛔ Excluded")){seen.add(x.rep);deduped.push(x);}
   for(const x of (ytdData?.reps||[]).filter(x=>x.tier!=="⛔ Excluded")){if(!seen.has(x.rep))deduped.push(x);}
@@ -371,7 +366,6 @@ function Scorecard({rep,r30Data,ytdData,history,onClose,teamAvgs,markets={}}){
     quality: letterGrade(r.net_issue_rate,bench.nir,true),
   };
 
-  // History for this rep
   const repHistory=history.filter(h=>h.win==="r30")
     .map(h=>{const found=h.reps?.find(x=>x.rep===rep);return found?{date:h.sdate||h.updated,rep:found}:null;})
     .filter(Boolean)
@@ -384,8 +378,6 @@ function Scorecard({rep,r30Data,ytdData,history,onClose,teamAvgs,markets={}}){
       <div style={{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:12,
         width:"100%",maxWidth:860,margin:"0 auto",animation:"slideIn .2s ease",padding:"16px 20px",
         position:"relative"}}>
-
-        {/* Header */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontWeight:800,fontSize:17,color:"#f1f5f9",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{rep}</div>
@@ -405,7 +397,6 @@ function Scorecard({rep,r30Data,ytdData,history,onClose,teamAvgs,markets={}}){
             padding:"4px 10px",fontWeight:700,marginLeft:12,flexShrink:0}}>✕ Close</button>
         </div>
 
-        {/* Grades */}
         <div style={{marginBottom:12}}>
           <div style={{fontSize:10,color:"#334155",letterSpacing:".07em",marginBottom:6}}>CATEGORY GRADES vs COMPANY AVERAGE</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6}}>
@@ -422,16 +413,14 @@ function Scorecard({rep,r30Data,ytdData,history,onClose,teamAvgs,markets={}}){
         </div>
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-          {/* Bar charts */}
           <div style={{background:"#080c14",borderRadius:8,padding:12}}>
             <div style={{fontSize:10,color:"#334155",letterSpacing:".07em",marginBottom:8}}>VS TEAM AVERAGE</div>
             <MiniBar value={r.net_vol} teamAvg={teamAvgs.net_vol} max={teamAvgs.net_vol*3} color="#38bdf8" label="Net Volume" fmt={f$}/>
             <MiniBar value={r.std_pct} teamAvg={teamAvgs.std_pct} max={1} color="#6366f1" label="STD%" fmt={fP}/>
             <MiniBar value={r.avg_deal} teamAvg={teamAvgs.avg_deal} max={teamAvgs.avg_deal*2.5} color="#f59e0b" label="Avg Deal" fmt={f$}/>
-            <MiniBar value={r.net_issue_rate} teamAvg={teamAvgs.net_issue_rate} max={1} color="#4ade80" label="NetStk% (closes→net)" fmt={fP}/>
-            <MiniBar value={1-r.fallout_rate} teamAvg={1-teamAvgs.fallout_rate} max={1} color="#a78bfa" label="Clean Rate (wtd fallout)" fmt={fP}/>
+            <MiniBar value={r.net_issue_rate} teamAvg={teamAvgs.net_issue_rate} max={1} color="#4ade80" label="NetStk%" fmt={fP}/>
+            <MiniBar value={1-r.fallout_rate} teamAvg={1-teamAvgs.fallout_rate} max={1} color="#a78bfa" label="Clean Rate" fmt={fP}/>
           </div>
-          {/* Donuts */}
           <div style={{background:"#080c14",borderRadius:8,padding:12}}>
             <div style={{fontSize:10,color:"#334155",letterSpacing:".07em",marginBottom:8}}>KEY RATES</div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6}}>
@@ -445,7 +434,6 @@ function Scorecard({rep,r30Data,ytdData,history,onClose,teamAvgs,markets={}}){
           </div>
         </div>
 
-        {/* R30 vs YTD Trends */}
         {r30R&&ytdR&&(
           <div style={{background:"#080c14",borderRadius:8,padding:12,marginBottom:10}}>
             <div style={{fontSize:10,color:"#334155",letterSpacing:".07em",marginBottom:8}}>R30 vs YTD TREND</div>
@@ -462,7 +450,6 @@ function Scorecard({rep,r30Data,ytdData,history,onClose,teamAvgs,markets={}}){
           </div>
         )}
 
-        {/* Historical sparklines */}
         {repHistory.length>=2&&(
           <div style={{background:"#080c14",borderRadius:10,padding:14,marginBottom:16}}>
             <div style={{fontSize:10,color:"#334155",letterSpacing:".07em",marginBottom:10}}>
@@ -497,10 +484,8 @@ function Scorecard({rep,r30Data,ytdData,history,onClose,teamAvgs,markets={}}){
           </div>
         )}
 
-        {/* Tier line chart */}
         <TierLineChart rep={r} r30Data={r30Data} ytdData={ytdData}/>
 
-        {/* Full stats */}
         <div style={{marginTop:10}}>
           <div style={{fontSize:10,color:"#334155",letterSpacing:".07em",marginBottom:6}}>FULL STATS ({r30R?"R30":"YTD"})</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(110px,1fr))",gap:5}}>
@@ -525,7 +510,6 @@ function Scorecard({rep,r30Data,ytdData,history,onClose,teamAvgs,markets={}}){
 function TrendsTab({r30Data,ytdData,history,onOpenScorecard}){
   const [sortTrend,setSortTrend]=useState({f:"composite",d:"desc"});
 
-  // Build trend rows — compare R30 vs YTD for each rep
   const trendRows=useMemo(()=>{
     if(!r30Data||!ytdData)return[];
     const rows=[];
@@ -548,7 +532,6 @@ function TrendsTab({r30Data,ytdData,history,onOpenScorecard}){
     return rows;
   },[r30Data,ytdData]);
 
-  // Historical trend across snapshots
   const historyRows=useMemo(()=>{
     const r30Snaps=history.filter(h=>h.win==="r30").sort((a,b)=>new Date(a.sdate||a.updated)-new Date(b.sdate||b.updated));
     if(r30Snaps.length<2)return[];
@@ -592,9 +575,7 @@ function TrendsTab({r30Data,ytdData,history,onOpenScorecard}){
 
   return(
     <div style={{padding:"16px 20px"}}>
-      {/* Biggest Movers */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:24}}>
-        {/* Heating Up */}
         <div style={{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:10,padding:16}}>
           <div style={{fontWeight:700,fontSize:13,color:"#4ade80",marginBottom:12}}>🔥 HEATING UP — Top 5</div>
           {top5.map((r,i)=>{
@@ -623,7 +604,6 @@ function TrendsTab({r30Data,ytdData,history,onOpenScorecard}){
             );
           })}
         </div>
-        {/* Cooling Off */}
         <div style={{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:10,padding:16}}>
           <div style={{fontWeight:700,fontSize:13,color:"#38bdf8",marginBottom:12}}>❄ COOLING OFF — Bottom 5</div>
           {bot5.map((r,i)=>{
@@ -653,7 +633,6 @@ function TrendsTab({r30Data,ytdData,history,onOpenScorecard}){
         </div>
       </div>
 
-      {/* Historical sparklines (only if 2+ snapshots) */}
       {historyRows.length>0&&(
         <div style={{marginBottom:24}}>
           <div style={{fontWeight:700,fontSize:13,color:"#a78bfa",marginBottom:12}}>
@@ -696,10 +675,9 @@ function TrendsTab({r30Data,ytdData,history,onOpenScorecard}){
         </div>
       )}
 
-      {/* Full trend table */}
       <div>
         <div style={{fontWeight:700,fontSize:13,color:"#e2e8f0",marginBottom:12}}>
-          📊 FULL TREND TABLE — {trendRows.length} reps · Sorted hottest → coldest · Click rep for scorecard
+          📊 FULL TREND TABLE — {trendRows.length} reps
         </div>
         <div style={{overflowX:"auto",borderRadius:10,border:"1px solid #1e2a3a"}}>
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
@@ -773,11 +751,9 @@ function TrendsTab({r30Data,ytdData,history,onOpenScorecard}){
   );
 }
 
-
-
 // ─── COMPARISON TOOL ─────────────────────────────────────────────────────────
 function ComparisonTool({r30Data,ytdData,markets,marketList}){
-  const [mode,setMode]=useState("rep"); // "rep" | "market"
+  const [mode,setMode]=useState("rep");
   const [selectedReps,setSelectedReps]=useState([]);
   const [selectedMarkets,setSelectedMarkets]=useState([]);
   const [dataWin,setDataWin]=useState("r30");
@@ -787,7 +763,6 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
     (srcData?.reps||[]).filter(r=>r.tier!=="⛔ Excluded"&&markets[r.rep]!=="⛔ Terminated")
   ,[srcData,markets]);
 
-  // Build market aggregates with volume-normalization
   const marketData=useMemo(()=>{
     if(!srcData||!marketList.length)return{};
     const result={};
@@ -805,14 +780,11 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
       const totalHold=sum("hold_cnt");
       const totalCrDecl=sum("crdecline_cnt");
       const totalNsli=sum("nsli");
-      // Volume-normalized rates (per 100 gross issued — scales any market to same base)
       const per100=f=>totalGross>0?(sum(f)/totalGross)*100:0;
       result[mkt]={
         name:mkt, repCount:reps.length,
-        // Totals
         totalGross, totalCloses, totalNetVol, totalCloseVol, totalNetCloses,
         totalCancel, totalHold, totalCrDecl, totalNsli,
-        // Team rates (volume-weighted avg)
         otd_pct: totalGross>0?totalCloses/totalGross:0,
         std_pct: sum("demo")>0?totalCloses/sum("demo"):0,
         netstk_pct: totalCloses>0?totalNetCloses/totalCloses:0,
@@ -820,11 +792,9 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
         avg_deal: totalCloses>0?totalCloseVol/totalCloses:0,
         avg_net_vol_per_rep: totalNetVol/reps.length,
         nsli_per_close: totalCloses>0?totalNsli/totalCloses:0,
-        // Normalized per 100 gross issued (apples-to-apples scale)
         norm_net_vol: per100("net_vol"),
         norm_closes: totalGross>0?(totalCloses/totalGross)*100:0,
         norm_nsli: per100("nsli"),
-        // Avg score
         avg_score: avg("score"),
         elite_pct: reps.filter(r=>r.tier==="🥇 Elite").length/reps.length,
         reps,
@@ -846,7 +816,6 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
     );
   };
 
-  // Rep metrics to compare
   const REP_METRICS=[
     {key:"nsli",       label:"NSLI/NCP $",  fmt:v=>"$"+Math.round(v).toLocaleString(),  get:r=>r.nsli,         higherBetter:true},
     {key:"otd_pct",    label:"OTD%",         fmt:v=>(v*100).toFixed(1)+"%",               get:r=>r.otd_pct,      higherBetter:true},
@@ -858,13 +827,10 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
     {key:"score",      label:"Overall Score",fmt:v=>v?.toFixed(4),                        get:r=>r.score,        higherBetter:true},
   ];
 
-  // Market metrics to compare
   const MKT_METRICS=[
     {key:"totalNetVol",     label:"Total Net Vol",       fmt:v=>"$"+Math.round(v).toLocaleString(),   higherBetter:true},
-    {key:"norm_net_vol",    label:"Net Vol per 100 Appts",fmt:v=>"$"+Math.round(v).toLocaleString(),  higherBetter:true,
-      note:"Normalized — what this market would produce scaled to 100 gross issued appointments"},
-    {key:"netstk_pct",      label:"NetStk%",              fmt:v=>(v*100).toFixed(1)+"%",              higherBetter:true,
-      breakdown:true},
+    {key:"norm_net_vol",    label:"Net Vol per 100 Appts",fmt:v=>"$"+Math.round(v).toLocaleString(),  higherBetter:true},
+    {key:"netstk_pct",      label:"NetStk%",              fmt:v=>(v*100).toFixed(1)+"%",              higherBetter:true, breakdown:true},
     {key:"otd_pct",         label:"OTD%",                 fmt:v=>(v*100).toFixed(1)+"%",              higherBetter:true},
     {key:"std_pct",         label:"STD%",                 fmt:v=>(v*100).toFixed(1)+"%",              higherBetter:true},
     {key:"fallout_rate",    label:"Wtd Fallout%",         fmt:v=>(v*100).toFixed(1)+"%",              higherBetter:false},
@@ -874,8 +840,7 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
     {key:"avg_score",       label:"Avg Rep Score",        fmt:v=>v?.toFixed(4),                       higherBetter:true},
     {key:"elite_pct",       label:"Elite Rep %",          fmt:v=>(v*100).toFixed(0)+"%",              higherBetter:true},
     {key:"repCount",        label:"Active Reps",          fmt:v=>v,                                   higherBetter:false},
-    {key:"totalGross",      label:"Total Gross Issued",   fmt:v=>v,                                   higherBetter:false,
-      note:"Raw lead volume — context for all other metrics"},
+    {key:"totalGross",      label:"Total Gross Issued",   fmt:v=>v,                                   higherBetter:false},
   ];
 
   const COLORS=["#38bdf8","#f59e0b","#4ade80","#f87171"];
@@ -886,7 +851,6 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
     ?activeReps.find(r=>r.rep===item)
     :marketData[item];
 
-  // Bar chart comparison component
   const CompBar=({values,fmt,higherBetter,label,note,breakdowns})=>{
     const nums=values.map(v=>typeof v==="number"?v:0);
     const maxV=Math.max(...nums,0.001);
@@ -908,8 +872,7 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
                 <div style={{width:8,height:8,borderRadius:"50%",background:COLORS[i],flexShrink:0}}/>
                 <div style={{flex:1,height:18,background:"#1e2a3a",borderRadius:3,overflow:"hidden",position:"relative"}}>
                   <div style={{position:"absolute",left:0,top:0,height:"100%",
-                    width:`${pct}%`,background:COLORS[i],opacity:.8,borderRadius:3,
-                    transition:"width .5s ease"}}/>
+                    width:`${pct}%`,background:COLORS[i],opacity:.8,borderRadius:3}}/>
                 </div>
                 <span style={{fontSize:12,color:isBest?COLORS[i]:"#94a3b8",
                   fontWeight:isBest?800:400,minWidth:90,textAlign:"right"}}>
@@ -918,18 +881,10 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
               </div>
               {bd&&(
                 <div style={{marginLeft:16,marginTop:3,display:"flex",gap:10,flexWrap:"wrap"}}>
-                  {bd.cancel!=null&&<span style={{fontSize:9,color:"#ef4444"}}>
-                    ⛔ Cxl {(bd.cancel*100).toFixed(1)}%
-                  </span>}
-                  {bd.hold!=null&&<span style={{fontSize:9,color:"#facc15"}}>
-                    ⏸ Hold {(bd.hold*100).toFixed(1)}%
-                  </span>}
-                  {bd.crdecl!=null&&<span style={{fontSize:9,color:"#a78bfa"}}>
-                    ❌ Decl {(bd.crdecl*100).toFixed(1)}%
-                  </span>}
-                  {bd.working!=null&&bd.working>0&&<span style={{fontSize:9,color:"#64748b"}}>
-                    ⏳ Wkg {(bd.working*100).toFixed(1)}%
-                  </span>}
+                  {bd.cancel!=null&&<span style={{fontSize:9,color:"#ef4444"}}>⛔ Cxl {(bd.cancel*100).toFixed(1)}%</span>}
+                  {bd.hold!=null&&<span style={{fontSize:9,color:"#facc15"}}>⏸ Hold {(bd.hold*100).toFixed(1)}%</span>}
+                  {bd.crdecl!=null&&<span style={{fontSize:9,color:"#a78bfa"}}>❌ Decl {(bd.crdecl*100).toFixed(1)}%</span>}
+                  {bd.working!=null&&bd.working>0&&<span style={{fontSize:9,color:"#64748b"}}>⏳ Wkg {(bd.working*100).toFixed(1)}%</span>}
                 </div>
               )}
             </div>
@@ -941,13 +896,11 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
 
   return(
     <div style={{padding:"16px 20px"}}>
-      {/* Header */}
       <div style={{marginBottom:18}}>
         <div style={{fontWeight:700,fontSize:15,color:"#e2e8f0",marginBottom:4}}>⚖ Comparison Tool</div>
         <div style={{fontSize:12,color:"#64748b"}}>Select up to 4 reps or markets for side-by-side analysis</div>
       </div>
 
-      {/* Mode + Window toggles */}
       <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
         <div style={{display:"flex",gap:6}}>
           {[["rep","👤 Rep vs Rep"],["market","🗺 Market vs Market"]].map(([m,l])=>(
@@ -973,7 +926,6 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
         </div>
       </div>
 
-      {/* Selector */}
       <div style={{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:10,padding:14,marginBottom:18}}>
         <div style={{fontSize:10,color:"#334155",letterSpacing:".07em",marginBottom:10}}>
           {mode==="rep"?`SELECT REPS (${selectedReps.length}/4)`:`SELECT MARKETS (${selectedMarkets.length}/4)`}
@@ -1018,12 +970,11 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
                 </button>
               );
             })}
-            {!marketList.length&&<div style={{color:"#334155",fontSize:12}}>No markets assigned yet — set up markets first.</div>}
+            {!marketList.length&&<div style={{color:"#334155",fontSize:12}}>No markets assigned yet.</div>}
           </div>
         )}
       </div>
 
-      {/* Legend */}
       {selectedItems.length>0&&(
         <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap"}}>
           {selectedItems.map((item,i)=>{
@@ -1047,17 +998,13 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
         </div>
       )}
 
-      {/* Context note for market comparison */}
       {mode==="market"&&selectedItems.length>=2&&(
         <div style={{background:"rgba(56,189,248,.05)",border:"1px solid rgba(56,189,248,.15)",
           borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#38bdf8",lineHeight:1.6}}>
-          <strong>Volume context:</strong> Markets with more gross issued appointments will naturally produce higher raw totals.
-          The <strong>Net Vol per 100 Appts</strong> metric normalizes for this — it shows what each market would produce
-          if scaled to the same lead volume. Use this alongside raw totals for a fair comparison.
+          <strong>Volume context:</strong> Use <strong>Net Vol per 100 Appts</strong> for a fair normalized comparison.
         </div>
       )}
 
-      {/* Comparison bars */}
       {selectedItems.length>=2?(
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:12}}>
           {metrics.map(m=>{
@@ -1066,28 +1013,18 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
               return d?m.get?m.get(d):d[m.key]:null;
             });
             if(values.every(v=>!v&&v!==0))return null;
-            // Build breakdown data for NetStk% metric
             let breakdowns=null;
             if(m.breakdown){
               breakdowns=selectedItems.map(item=>{
                 const d=getData(item);
                 if(!d) return null;
                 if(mode==="rep"){
-                  // Rep breakdown: rates per close
-                  return{
-                    cancel: d.cancel_rate,
-                    hold:   d.hold_rate,
-                    crdecl: d.crdecl_rate,
-                    working: d.working_cnt>0&&d.otd_cnt>0?d.working_cnt/d.otd_cnt:null,
-                  };
+                  return{cancel:d.cancel_rate,hold:d.hold_rate,crdecl:d.crdecl_rate,
+                    working:d.working_cnt>0&&d.otd_cnt>0?d.working_cnt/d.otd_cnt:null};
                 } else {
-                  // Market breakdown: weighted avg rates
-                  return{
-                    cancel: d.totalCloses>0?d.totalCancel/d.totalCloses:0,
-                    hold:   d.totalCloses>0?d.totalHold/d.totalCloses:0,
-                    crdecl: d.totalCloses>0?d.totalCrDecl/d.totalCloses:0,
-                    working:null,
-                  };
+                  return{cancel:d.totalCloses>0?d.totalCancel/d.totalCloses:0,
+                    hold:d.totalCloses>0?d.totalHold/d.totalCloses:0,
+                    crdecl:d.totalCloses>0?d.totalCrDecl/d.totalCloses:0,working:null};
                 }
               });
             }
@@ -1104,33 +1041,20 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
         </div>
       )}
 
-      {/* Rep volume-normalized breakdown */}
       {mode==="rep"&&selectedItems.length>=2&&(()=>{
         const maxGross=Math.max(...selectedItems.map(rep=>{
           const d=activeReps.find(r=>r.rep===rep);
           return d?.gross_iss||0;
         }));
-        const maxDemos=Math.max(...selectedItems.map(rep=>{
-          const d=activeReps.find(r=>r.rep===rep);
-          return d?.demo||0;
-        }));
         return(
           <div style={{marginTop:20}}>
-            {/* Context banner */}
             <div style={{background:"rgba(56,189,248,.05)",border:"1px solid rgba(56,189,248,.15)",
               borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#38bdf8",lineHeight:1.6}}>
-              <strong>Volume context:</strong> Reps with more gross issued appointments will naturally produce higher raw totals.
-              The normalized metrics below scale each rep to the same appointment volume so you can compare
-              pure efficiency regardless of how many leads they ran.
+              <strong>Volume context:</strong> Normalized metrics scale each rep to the same appointment volume.
             </div>
-
-            {/* Normalized bar charts */}
             <div style={{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:10,padding:16,marginBottom:16}}>
               <div style={{fontWeight:700,fontSize:13,color:"#e2e8f0",marginBottom:4}}>
-                📐 Volume-Normalized Metrics — per 100 gross issued appointments
-              </div>
-              <div style={{fontSize:11,color:"#64748b",marginBottom:14}}>
-                What each rep would produce if everyone ran the same {maxGross} appointment volume
+                📐 Volume-Normalized — per 100 gross issued
               </div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:10}}>
                 {[
@@ -1178,21 +1102,15 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
                 })}
               </div>
             </div>
-
-            {/* Projected scale table */}
             <div style={{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:10,padding:16}}>
               <div style={{fontWeight:700,fontSize:13,color:"#e2e8f0",marginBottom:4}}>
                 📐 Projected Scale — If all reps ran {maxGross} gross issued appointments
-              </div>
-              <div style={{fontSize:11,color:"#64748b",marginBottom:14}}>
-                Projects each rep's raw output to match the highest-volume rep in this comparison.
-                Rates (OTD%, STD%, NetStk%) stay the same — only volumes scale.
               </div>
               <div style={{overflowX:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                   <thead>
                     <tr style={{background:"#080c14"}}>
-                      {["Rep","Tier","Actual Gross","Demos","Scale Factor","Proj Net Vol","Proj Closes","Proj Net Closes","Proj NSLI","OTD%","STD%","NetStk%","Wtd Fallout%"].map(l=>(
+                      {["Rep","Tier","Actual Gross","Demos","Scale","Proj Net Vol","Proj Closes","Proj Net Closes","Proj NSLI","OTD%","STD%","NetStk%","Fallout%"].map(l=>(
                         <th key={l} style={thS}>{l}</th>
                       ))}
                     </tr>
@@ -1202,31 +1120,25 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
                       const d=activeReps.find(r=>r.rep===rep);
                       if(!d)return null;
                       const scale=d.gross_iss>0?maxGross/d.gross_iss:1;
+                      const teamOtd=activeReps.reduce((a,r)=>a+r.otd_pct,0)/activeReps.length;
+                      const teamStd=activeReps.reduce((a,r)=>a+r.std_pct,0)/activeReps.length;
+                      const teamNir=activeReps.reduce((a,r)=>a+r.net_issue_rate,0)/activeReps.length;
+                      const teamFo=activeReps.reduce((a,r)=>a+r.fallout_rate,0)/activeReps.length;
                       return(
                         <tr key={rep} style={{background:i%2===0?"#080c14":"#0a0f1a"}}>
                           <td style={{...tdS,fontWeight:700,color:COLORS[i],whiteSpace:"nowrap"}}>{rep}</td>
                           <td style={tdS}><span style={{color:TC[d.tier]??"#64748b",fontSize:10,fontWeight:600}}>{d.tier}</span></td>
                           <td style={tdS}>{d.gross_iss}</td>
                           <td style={tdS}>{d.demo}</td>
-                          <td style={{...tdS,color:scale>1.5?"#f59e0b":scale<0.67?"#38bdf8":"#94a3b8",fontWeight:700}}>
-                            {scale.toFixed(2)}×
-                          </td>
+                          <td style={{...tdS,color:scale>1.5?"#f59e0b":scale<0.67?"#38bdf8":"#94a3b8",fontWeight:700}}>{scale.toFixed(2)}×</td>
                           <td style={{...tdS,color:"#4ade80",fontWeight:700}}>${Math.round(d.net_vol*scale).toLocaleString()}</td>
                           <td style={tdS}>{Math.round(d.otd_cnt*scale)}</td>
                           <td style={tdS}>{Math.round(d.num_net*scale)}</td>
                           <td style={tdS}>${Math.round(d.nsli*scale).toLocaleString()}</td>
-                          <td style={{...tdS,color:d.otd_pct>(activeReps.reduce((a,r)=>a+r.otd_pct,0)/activeReps.length)?"#4ade80":"#f87171"}}>
-                            {(d.otd_pct*100).toFixed(1)}%
-                          </td>
-                          <td style={{...tdS,color:d.std_pct>(activeReps.reduce((a,r)=>a+r.std_pct,0)/activeReps.length)?"#4ade80":"#f87171"}}>
-                            {(d.std_pct*100).toFixed(1)}%
-                          </td>
-                          <td style={{...tdS,color:d.net_issue_rate>(activeReps.reduce((a,r)=>a+r.net_issue_rate,0)/activeReps.length)?"#4ade80":"#f87171"}}>
-                            {(d.net_issue_rate*100).toFixed(1)}%
-                          </td>
-                          <td style={{...tdS,color:d.fallout_rate<(activeReps.reduce((a,r)=>a+r.fallout_rate,0)/activeReps.length)?"#4ade80":"#f87171"}}>
-                            {(d.fallout_rate*100).toFixed(1)}%
-                          </td>
+                          <td style={{...tdS,color:d.otd_pct>teamOtd?"#4ade80":"#f87171"}}>{(d.otd_pct*100).toFixed(1)}%</td>
+                          <td style={{...tdS,color:d.std_pct>teamStd?"#4ade80":"#f87171"}}>{(d.std_pct*100).toFixed(1)}%</td>
+                          <td style={{...tdS,color:d.net_issue_rate>teamNir?"#4ade80":"#f87171"}}>{(d.net_issue_rate*100).toFixed(1)}%</td>
+                          <td style={{...tdS,color:d.fallout_rate<teamFo?"#4ade80":"#f87171"}}>{(d.fallout_rate*100).toFixed(1)}%</td>
                         </tr>
                       );
                     })}
@@ -1238,29 +1150,20 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
         );
       })()}
 
-      {/* Projected scale table for market comparison */}
       {mode==="market"&&selectedItems.length>=2&&(()=>{
         const maxGross=Math.max(...selectedItems.map(m=>marketData[m]?.totalGross||0));
         return(
           <div style={{marginTop:20,background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:10,padding:16}}>
             <div style={{fontWeight:700,fontSize:13,color:"#e2e8f0",marginBottom:4}}>
-              📐 Projected Scale — If all markets ran {maxGross} gross issued appointments
-            </div>
-            <div style={{fontSize:11,color:"#64748b",marginBottom:14}}>
-              Scales each market's production to match the highest-volume market. Shows expected output at equal lead volume.
+              📐 Projected Scale — If all markets ran {maxGross} gross issued
             </div>
             <div style={{overflowX:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                 <thead>
                   <tr style={{background:"#080c14"}}>
-                    <th style={thS}>Market</th>
-                    <th style={thS}>Actual Gross</th>
-                    <th style={thS}>Scale Factor</th>
-                    <th style={thS}>Projected Net Vol</th>
-                    <th style={thS}>Projected Closes</th>
-                    <th style={thS}>Actual NetStk%</th>
-                    <th style={thS}>Actual STD%</th>
-                    <th style={thS}>Actual Fallout%</th>
+                    <th style={thS}>Market</th><th style={thS}>Actual Gross</th><th style={thS}>Scale</th>
+                    <th style={thS}>Proj Net Vol</th><th style={thS}>Proj Closes</th>
+                    <th style={thS}>NetStk%</th><th style={thS}>STD%</th><th style={thS}>Fallout%</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1268,15 +1171,13 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
                     const d=marketData[m];
                     if(!d)return null;
                     const scale=maxGross/d.totalGross;
-                    const projNetVol=Math.round(d.totalNetVol*scale);
-                    const projCloses=Math.round(d.totalCloses*scale);
                     return(
                       <tr key={m} style={{background:i%2===0?"#080c14":"#0a0f1a"}}>
                         <td style={{...tdS,fontWeight:700,color:COLORS[i]}}>{m}</td>
                         <td style={tdS}>{d.totalGross}</td>
                         <td style={{...tdS,color:scale>1.5?"#f59e0b":"#94a3b8"}}>{scale.toFixed(2)}×</td>
-                        <td style={{...tdS,color:"#4ade80",fontWeight:700}}>${projNetVol.toLocaleString()}</td>
-                        <td style={tdS}>{projCloses}</td>
+                        <td style={{...tdS,color:"#4ade80",fontWeight:700}}>${Math.round(d.totalNetVol*scale).toLocaleString()}</td>
+                        <td style={tdS}>{Math.round(d.totalCloses*scale)}</td>
                         <td style={tdS}>{(d.netstk_pct*100).toFixed(1)}%</td>
                         <td style={tdS}>{(d.std_pct*100).toFixed(1)}%</td>
                         <td style={{...tdS,color:d.fallout_rate<.2?"#4ade80":"#f87171"}}>{(d.fallout_rate*100).toFixed(1)}%</td>
@@ -1301,7 +1202,6 @@ function MarketManager({r30Data,ytdData,markets,marketList,onSave}){
   const [saving,setSaving]=useState(false);
   const [saved,setSaved]=useState(false);
 
-  // Get all known reps
   const allReps=useMemo(()=>{
     const seen=new Set();const reps=[];
     for(const r of [...(r30Data?.reps||[]),...(ytdData?.reps||[])].filter(x=>x.tier!=="⛔ Excluded")){
@@ -1310,7 +1210,6 @@ function MarketManager({r30Data,ytdData,markets,marketList,onSave}){
     return reps.sort();
   },[r30Data,ytdData]);
 
-  const RESERVED=["⛔ Terminated"];
   const addMarket=()=>{
     const m=newMarket.trim();
     if(!m||list.includes(m))return;
@@ -1325,7 +1224,6 @@ function MarketManager({r30Data,ytdData,markets,marketList,onSave}){
       return next;
     });
   };
-
   const removeMarket=m=>{
     setList(prev=>prev.filter(x=>x!==m));
     setAssignments(prev=>{
@@ -1334,11 +1232,7 @@ function MarketManager({r30Data,ytdData,markets,marketList,onSave}){
       return next;
     });
   };
-
-  const assign=(rep,market)=>{
-    setAssignments(prev=>({...prev,[rep]:market||undefined}));
-  };
-
+  const assign=(rep,market)=>{setAssignments(prev=>({...prev,[rep]:market||undefined}));};
   const save=async()=>{
     setSaving(true);
     await db.set("markets",{assignments,list});
@@ -1347,7 +1241,6 @@ function MarketManager({r30Data,ytdData,markets,marketList,onSave}){
     setTimeout(()=>setSaved(false),2000);
   };
 
-  // Group reps by market
   const byMarket={};
   list.forEach(m=>{byMarket[m]=[];});
   byMarket["Unassigned"]=[];
@@ -1364,37 +1257,28 @@ function MarketManager({r30Data,ytdData,markets,marketList,onSave}){
       <div style={{marginBottom:20}}>
         <div style={{fontWeight:700,fontSize:15,color:"#f59e0b",marginBottom:4}}>🗺 Market Manager</div>
         <div style={{fontSize:12,color:"#64748b",lineHeight:1.6,maxWidth:620}}>
-          Assign each rep to their market. This powers market-level filtering and will drive
-          the "who gets the next lead" feature. Changes save for everyone instantly.
+          Assign each rep to their market. Changes save for everyone instantly.
         </div>
       </div>
-
-      {/* Add market */}
       <div style={{display:"flex",gap:8,marginBottom:20,alignItems:"center"}}>
         <input value={newMarket} onChange={e=>setNewMarket(e.target.value)}
           onKeyDown={e=>e.key==="Enter"&&addMarket()}
           placeholder="Add new market name..."
           style={{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:6,
-            padding:"8px 12px",color:"#e2e8f0",fontSize:13,fontFamily:"inherit",
-            outline:"none",width:220}}/>
-        <button onClick={addMarket} style={{
-          background:"linear-gradient(135deg,#f59e0b,#d97706)",border:"none",borderRadius:6,
-          padding:"8px 16px",color:"#000",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"
-        }}>+ Add Market</button>
+            padding:"8px 12px",color:"#e2e8f0",fontSize:13,fontFamily:"inherit",outline:"none",width:220}}/>
+        <button onClick={addMarket} style={{background:"linear-gradient(135deg,#f59e0b,#d97706)",border:"none",borderRadius:6,
+          padding:"8px 16px",color:"#000",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>+ Add Market</button>
         <button onClick={save} disabled={saving} style={{
           background:saved?"#4ade80":"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",
           borderRadius:6,padding:"8px 16px",color:saved?"#000":"#fff",
           fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit",marginLeft:"auto"
         }}>{saving?"Saving...":saved?"✓ Saved":"Save Changes"}</button>
       </div>
-
-      {/* Market pills */}
       {list.length>0&&(
         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>
           {list.map(m=>(
             <div key={m} style={{display:"flex",alignItems:"center",gap:6,
-              background:"#0d1120",border:"1px solid #f59e0b44",borderRadius:20,
-              padding:"5px 12px",fontSize:12}}>
+              background:"#0d1120",border:"1px solid #f59e0b44",borderRadius:20,padding:"5px 12px",fontSize:12}}>
               <span style={{color:"#f59e0b",fontWeight:600}}>{m}</span>
               <span style={{color:"#64748b",fontSize:11}}>({byMarket[m]?.length||0} reps)</span>
               <button onClick={()=>removeMarket(m)} style={{background:"none",border:"none",
@@ -1403,10 +1287,7 @@ function MarketManager({r30Data,ytdData,markets,marketList,onSave}){
           ))}
         </div>
       )}
-
-      {/* Rep assignment table */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:12}}>
-        {/* Unassigned first */}
         {byMarket["Unassigned"]?.length>0&&(
           <div style={{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:10,padding:14,gridColumn:"1/-1"}}>
             <div style={{fontSize:11,color:"#64748b",letterSpacing:".07em",marginBottom:10}}>
@@ -1423,17 +1304,14 @@ function MarketManager({r30Data,ytdData,markets,marketList,onSave}){
                     <option value="">— assign —</option>
                     {list.map(m=><option key={m} value={m}>{m}</option>)}
                   </select>
-                  <button onClick={()=>toggleTerminated(rep)} title="Mark as Terminated"
+                  <button onClick={()=>toggleTerminated(rep)}
                     style={{background:"rgba(239,68,68,.15)",border:"1px solid rgba(239,68,68,.3)",
-                      borderRadius:5,padding:"4px 7px",color:"#ef4444",cursor:"pointer",
-                      fontSize:10,fontWeight:700,fontFamily:"inherit"}}>⛔</button>
+                      borderRadius:5,padding:"4px 7px",color:"#ef4444",cursor:"pointer",fontSize:10,fontWeight:700,fontFamily:"inherit"}}>⛔</button>
                 </div>
               ))}
             </div>
           </div>
         )}
-
-        {/* Markets with assigned reps */}
         {list.map(m=>(
           byMarket[m]?.length>0&&(
             <div key={m} style={{background:"#0d1120",border:"1px solid #f59e0b33",borderRadius:10,padding:14}}>
@@ -1455,10 +1333,9 @@ function MarketManager({r30Data,ytdData,markets,marketList,onSave}){
                       <option value="">— unassign —</option>
                       {list.map(mk=><option key={mk} value={mk}>{mk}</option>)}
                     </select>
-                    <button onClick={()=>toggleTerminated(rep)} title="Mark as Terminated"
+                    <button onClick={()=>toggleTerminated(rep)}
                       style={{background:"rgba(239,68,68,.15)",border:"1px solid rgba(239,68,68,.3)",
-                        borderRadius:5,padding:"4px 7px",color:"#ef4444",cursor:"pointer",
-                        fontSize:10,fontWeight:700,fontFamily:"inherit"}}>⛔</button>
+                        borderRadius:5,padding:"4px 7px",color:"#ef4444",cursor:"pointer",fontSize:10,fontWeight:700,fontFamily:"inherit"}}>⛔</button>
                   </div>
                 );
               })}
@@ -1466,32 +1343,25 @@ function MarketManager({r30Data,ytdData,markets,marketList,onSave}){
           )
         ))}
       </div>
-
-      {/* Terminated reps section */}
       {byMarket["⛔ Terminated"]?.length>0&&(
         <div style={{background:"#0d1120",border:"1px solid rgba(239,68,68,.2)",borderRadius:10,padding:14,marginTop:4}}>
           <div style={{fontSize:11,color:"#ef4444",letterSpacing:".07em",marginBottom:10,fontWeight:700}}>
-            ⛔ TERMINATED ({byMarket["⛔ Terminated"].length} reps) — excluded from all rankings and metrics
+            ⛔ TERMINATED ({byMarket["⛔ Terminated"].length} reps)
           </div>
           <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
             {byMarket["⛔ Terminated"].map(rep=>(
               <div key={rep} style={{display:"flex",alignItems:"center",gap:6,
-                background:"rgba(239,68,68,.07)",border:"1px solid rgba(239,68,68,.2)",
-                borderRadius:6,padding:"5px 10px"}}>
+                background:"rgba(239,68,68,.07)",border:"1px solid rgba(239,68,68,.2)",borderRadius:6,padding:"5px 10px"}}>
                 <span style={{fontSize:12,color:"#94a3b8",textDecoration:"line-through"}}>{rep}</span>
-                <button onClick={()=>toggleTerminated(rep)} title="Restore rep"
-                  style={{background:"none",border:"none",color:"#64748b",cursor:"pointer",
-                    fontSize:11,fontFamily:"inherit"}}>↩ restore</button>
+                <button onClick={()=>toggleTerminated(rep)}
+                  style={{background:"none",border:"none",color:"#64748b",cursor:"pointer",fontSize:11,fontFamily:"inherit"}}>↩ restore</button>
               </div>
             ))}
           </div>
         </div>
       )}
-
       {allReps.length===0&&(
-        <div style={{color:"#334155",fontSize:13,textAlign:"center",padding:40}}>
-          Upload R30 or YTD data first to see reps.
-        </div>
+        <div style={{color:"#334155",fontSize:13,textAlign:"center",padding:40}}>Upload R30 or YTD data first.</div>
       )}
     </div>
   );
@@ -1503,13 +1373,12 @@ function RepMapTab({allReps,markets}){
   const leafletMap=useRef(null);
   const markersRef=useRef([]);
   const routeLayerRef=useRef(null);
-
-  const [repData,setRepData]=useState([]); // [{rep,address,lat,lng,destinations:[]}]
+  const [repData,setRepData]=useState([]);
   const [activeRep,setActiveRep]=useState(null);
   const [search,setSearch]=useState("");
   const [orsKey,setOrsKey]=useState(()=>localStorage.getItem("ors_api_key")||"");
   const [orsKeyInput,setOrsKeyInput]=useState(()=>localStorage.getItem("ors_api_key")||"");
-  const [panel,setPanel]=useState("reps"); // "reps"|"route"|"settings"
+  const [panel,setPanel]=useState("reps");
   const [addrInput,setAddrInput]=useState("");
   const [destInputs,setDestInputs]=useState(["","",""]);
   const [routeResults,setRouteResults]=useState({});
@@ -1519,7 +1388,6 @@ function RepMapTab({allReps,markets}){
   const [qTo,setQTo]=useState("");
   const [qResult,setQResult]=useState(null);
   const [qLoading,setQLoading]=useState(false);
-  const [saving,setSaving]=useState(false);
   const [toast,setToast]=useState(null);
   const toastTimer=useRef(null);
 
@@ -1532,15 +1400,10 @@ function RepMapTab({allReps,markets}){
     toastTimer.current=setTimeout(()=>setToast(null),2800);
   };
 
-  // Load from Firebase on mount
   useEffect(()=>{
-    (async()=>{
-      const d=await db.get("repmap");
-      if(d&&Array.isArray(d))setRepData(d);
-    })();
+    (async()=>{const d=await db.get("repmap");if(d&&Array.isArray(d))setRepData(d);})();
   },[]);
 
-  // Sync from allReps — add any missing reps (no address yet)
   useEffect(()=>{
     if(!allReps.length)return;
     setRepData(prev=>{
@@ -1553,32 +1416,24 @@ function RepMapTab({allReps,markets}){
     });
   },[allReps,markets]);
 
-  // Save to Firebase whenever repData changes (debounced)
   const saveTimer=useRef(null);
   useEffect(()=>{
     if(!repData.length)return;
     clearTimeout(saveTimer.current);
-    saveTimer.current=setTimeout(async()=>{
-      await db.set("repmap",repData);
-    },1500);
+    saveTimer.current=setTimeout(async()=>{await db.set("repmap",repData);},1500);
   },[repData]);
 
-  // Init Leaflet map
   useEffect(()=>{
     if(!mapRef.current||leafletMap.current)return;
     const map=L.map(mapRef.current,{center:[27.8,-81.7],zoom:7,zoomControl:false});
     L.control.zoom({position:"bottomright"}).addTo(map);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{
-      attribution:"© OpenStreetMap contributors",maxZoom:19
-    }).addTo(map);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"© OpenStreetMap contributors",maxZoom:19}).addTo(map);
     routeLayerRef.current=L.layerGroup().addTo(map);
     leafletMap.current=map;
-    // Fix Leaflet tile CSS interference with React's scoped styles
     setTimeout(()=>map.invalidateSize(),100);
     return()=>{map.remove();leafletMap.current=null;};
   },[]);
 
-  // Render markers whenever repData or activeRep changes
   useEffect(()=>{
     if(!leafletMap.current)return;
     markersRef.current.forEach(m=>m.remove());
@@ -1600,7 +1455,6 @@ function RepMapTab({allReps,markets}){
     });
   },[repData,activeRep]);
 
-  // Helpers
   const haversine=(lat1,lng1,lat2,lng2)=>{
     const R=3958.8,dL=(lat2-lat1)*Math.PI/180,dl=(lng2-lng1)*Math.PI/180;
     const a=Math.sin(dL/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dl/2)**2;
@@ -1622,7 +1476,7 @@ function RepMapTab({allReps,markets}){
       setRepData(prev=>prev.map(r=>r.rep===activeRep?{...r,address:addrInput.trim(),lat:geo.lat,lng:geo.lng}:r));
       showToast("Location found ✓","success");
       if(leafletMap.current)leafletMap.current.flyTo([geo.lat,geo.lng],11,{duration:1});
-    }else{showToast("Address not found — try a more specific address","error");}
+    }else{showToast("Address not found","error");}
     setGeocoding(false);
   };
 
@@ -1664,39 +1518,8 @@ function RepMapTab({allReps,markets}){
     showToast("Done ✓","success");
   };
 
-  const quickRoute=async()=>{
-    if(!qFrom.trim()||!qTo.trim()){showToast("Enter both From and To","error");return;}
-    setQLoading(true);setQResult(null);
-    try{
-      const [fGeo,tGeo]=await Promise.all([nominatim(qFrom),nominatim(qTo)]);
-      if(!fGeo||!tGeo){setQResult({error:"Could not locate one or both addresses"});setQLoading(false);return;}
-      if(orsKey){
-        const res=await fetch("https://api.openrouteservice.org/v2/directions/driving-car",{
-          method:"POST",headers:{"Authorization":orsKey,"Content-Type":"application/json"},
-          body:JSON.stringify({coordinates:[[fGeo.lng,fGeo.lat],[tGeo.lng,tGeo.lat]]})
-        });
-        const data=await res.json();
-        if(data.routes?.[0]){
-          const s=data.routes[0].summary;
-          setQResult({miles:(s.distance*0.000621371).toFixed(1),time:fmtTime(Math.round(s.duration/60)),from:qFrom,to:qTo});
-          routeLayerRef.current?.clearLayers();
-          L.polyline([[fGeo.lat,fGeo.lng],[tGeo.lat,tGeo.lng]],{color:"#34d399",weight:3,opacity:.7,dashArray:"6,6"}).addTo(routeLayerRef.current);
-          leafletMap.current?.fitBounds([[fGeo.lat,fGeo.lng],[tGeo.lat,tGeo.lng]],{padding:[50,50]});
-        }else{setQResult({error:data.error?.message||"Route not found"});}
-      }else{
-        const miles=(haversine(fGeo.lat,fGeo.lng,tGeo.lat,tGeo.lng)*1.3).toFixed(1);
-        setQResult({miles:miles+"*",time:fmtTime(Math.round(miles/45*60))+"*",from:qFrom,to:qTo,est:true});
-        routeLayerRef.current?.clearLayers();
-        L.polyline([[fGeo.lat,fGeo.lng],[tGeo.lat,tGeo.lng]],{color:"#34d399",weight:3,opacity:.7,dashArray:"6,6"}).addTo(routeLayerRef.current);
-        leafletMap.current?.fitBounds([[fGeo.lat,fGeo.lng],[tGeo.lat,tGeo.lng]],{padding:[50,50]});
-      }
-    }catch(e){setQResult({error:"Network error: "+e.message});}
-    setQLoading(false);
-  };
-
   const activeRepData=repData.find(r=>r.rep===activeRep);
 
-  // When switching to a rep, pre-fill inputs
   useEffect(()=>{
     if(!activeRepData)return;
     setAddrInput(activeRepData.address||"");
@@ -1716,7 +1539,6 @@ function RepMapTab({allReps,markets}){
   const mapped=filteredReps.filter(r=>r.lat!=null);
   const unmapped=filteredReps.filter(r=>r.lat==null);
 
-  // Styles matching the existing app
   const panelBg="#0d1120";const border="1px solid #1e2a3a";
   const inp={background:"#111827",border:"1px solid #1e2a3a",borderRadius:6,padding:"7px 11px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",outline:"none",width:"100%"};
   const btn=(accent)=>({background:accent?"linear-gradient(135deg,#0ea5e9,#6366f1)":"#111827",border:accent?"none":border,borderRadius:6,padding:"7px 14px",color:"#fff",fontWeight:accent?700:400,fontSize:12,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"});
@@ -1745,14 +1567,8 @@ function RepMapTab({allReps,markets}){
                 <div style={{padding:"10px 12px",fontSize:11,color:"#ef4444"}}>⚠ {r.error}</div>
               ):(
                 <div style={{display:"flex",gap:24,padding:"10px 14px"}}>
-                  <div>
-                    <div style={{fontSize:18,fontWeight:800,color:"#f1f5f9"}}>{r.miles}</div>
-                    <div style={{fontSize:10,color:"#64748b"}}>miles</div>
-                  </div>
-                  <div>
-                    <div style={{fontSize:18,fontWeight:800,color:"#f1f5f9"}}>{r.time}</div>
-                    <div style={{fontSize:10,color:"#64748b"}}>drive time</div>
-                  </div>
+                  <div><div style={{fontSize:18,fontWeight:800,color:"#f1f5f9"}}>{r.miles}</div><div style={{fontSize:10,color:"#64748b"}}>miles</div></div>
+                  <div><div style={{fontSize:18,fontWeight:800,color:"#f1f5f9"}}>{r.time}</div><div style={{fontSize:10,color:"#64748b"}}>drive time</div></div>
                 </div>
               )}
             </div>
@@ -1767,8 +1583,6 @@ function RepMapTab({allReps,markets}){
 
   return(
     <div style={{display:"flex",height:"calc(100vh - 52px)",overflow:"hidden",position:"relative"}}>
-
-      {/* Toast */}
       {toast&&(
         <div style={{position:"absolute",bottom:20,left:"50%",transform:"translateX(-50%)",
           background:"#111827",border:`1px solid ${toast.type==="success"?"#4ade80":toast.type==="error"?"#ef4444":"#1e2a3a"}`,
@@ -1778,21 +1592,14 @@ function RepMapTab({allReps,markets}){
           {toast.msg}
         </div>
       )}
-
-      {/* Map */}
       <div style={{flex:1,position:"relative"}}>
         <div ref={mapRef} style={{width:"100%",height:"100%"}}/>
-        {/* Leaflet dark tile overlay */}
         <style>{`.leaflet-tile{filter:brightness(0.6) saturate(0.7) hue-rotate(195deg);}.leaflet-container{background:#0d1a2e!important;}.leaflet-popup-content-wrapper{background:#0d1120!important;border:1px solid #1e2a3a!important;border-radius:8px!important;box-shadow:0 4px 20px rgba(0,0,0,.6)!important;color:#e2e8f0!important;}.leaflet-popup-tip{background:#0d1120!important;}.leaflet-popup-content{margin:10px 14px!important;}`}</style>
       </div>
-
-      {/* Side Panel */}
       <div style={{width:360,background:panelBg,borderLeft:border,display:"flex",flexDirection:"column",overflow:"hidden",zIndex:10}}>
-
-        {/* Panel Tabs */}
         <div style={{display:"flex",borderBottom:border,flexShrink:0}}>
           {[["reps","Reps"],["route","Route Check"],["settings","Settings"]].map(([k,l])=>(
-            <div key={k} onClick={()=>{setPanel(k);if(k==="reps"&&activeRep){}}} style={{
+            <div key={k} onClick={()=>setPanel(k)} style={{
               flex:1,padding:"10px 4px",fontSize:10,textAlign:"center",cursor:"pointer",letterSpacing:".06em",
               textTransform:"uppercase",fontFamily:"inherit",
               color:panel===k?"#34d399":"#64748b",
@@ -1802,14 +1609,10 @@ function RepMapTab({allReps,markets}){
             </div>
           ))}
         </div>
-
         <div style={{flex:1,overflowY:"auto",padding:14}}>
-
-          {/* ── REPS PANEL ── */}
           {panel==="reps"&&!activeRep&&(
             <div>
-              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search reps or markets…"
-                style={{...inp,marginBottom:10}}/>
+              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search reps or markets…" style={{...inp,marginBottom:10}}/>
               <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
                 <span style={{fontSize:11,color:"#64748b"}}>{repData.length} reps total</span>
                 <span style={{fontSize:11,color:"#4ade80"}}>· {mapped.length} mapped</span>
@@ -1853,29 +1656,23 @@ function RepMapTab({allReps,markets}){
               )}
               {repData.length===0&&(
                 <div style={{textAlign:"center",padding:"40px 20px",color:"#334155",fontSize:13}}>
-                  <div style={{fontSize:32,marginBottom:12}}>🗺</div>
-                  Upload R30 or YTD data first to populate reps.
+                  <div style={{fontSize:32,marginBottom:12}}>🗺</div>Upload R30 or YTD data first.
                 </div>
               )}
             </div>
           )}
-
-          {/* ── REP EDITOR ── */}
           {panel==="reps"&&activeRep&&(
             <div>
-              <div onClick={()=>setActiveRep(null)} style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"#64748b",cursor:"pointer",marginBottom:12,transition:"color .15s"}}>
+              <div onClick={()=>setActiveRep(null)} style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"#64748b",cursor:"pointer",marginBottom:12}}>
                 ← Back to list
               </div>
               <div style={{fontWeight:800,fontSize:16,color:"#f1f5f9",marginBottom:2}}>{activeRep}</div>
               {markets[activeRep]&&<div style={{fontSize:11,color:"#f59e0b",marginBottom:14}}>Market: {markets[activeRep]}</div>}
-
-              {/* Address */}
               <div style={{marginBottom:16}}>
                 <div style={sectionLbl}>Home Address</div>
                 <div style={{display:"flex",gap:6}}>
                   <input value={addrInput} onChange={e=>setAddrInput(e.target.value)}
-                    onKeyDown={e=>e.key==="Enter"&&geocodeRep()}
-                    placeholder="123 Main St, Miami, FL" style={{...inp,flex:1}}/>
+                    onKeyDown={e=>e.key==="Enter"&&geocodeRep()} placeholder="123 Main St, Miami, FL" style={{...inp,flex:1}}/>
                   <button onClick={geocodeRep} disabled={geocoding} style={{...btn(false),background:"#111827",border:"1px solid #34d399",color:"#34d399",flexShrink:0}}>
                     {geocoding?"…":"📍 Locate"}
                   </button>
@@ -1886,32 +1683,25 @@ function RepMapTab({allReps,markets}){
                   </div>
                 )}
               </div>
-
-              {/* Destinations */}
               <div style={{marginBottom:12}}>
-                <div style={sectionLbl}>Drive Distance Check — up to 3 destinations</div>
+                <div style={sectionLbl}>Drive Distance Check</div>
                 {destInputs.map((d,i)=>(
                   <div key={i} style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
                     <span style={{fontSize:10,color:"#334155",width:14,flexShrink:0,fontFamily:"monospace"}}>{i+1}</span>
                     <input value={d} onChange={e=>setDestInputs(prev=>prev.map((v,j)=>j===i?e.target.value:v))}
-                      onKeyDown={e=>e.key==="Enter"&&calcRoutes()}
-                      placeholder="City or address in Florida" style={inp}/>
+                      onKeyDown={e=>e.key==="Enter"&&calcRoutes()} placeholder="City or address in Florida" style={inp}/>
                   </div>
                 ))}
                 <button onClick={calcRoutes} disabled={calcingRoutes} style={{...btn(true),width:"100%",marginTop:6}}>
                   {calcingRoutes?"Calculating…":"Calculate Drives"}
                 </button>
               </div>
-
               <RouteResultBlock repKey={activeRep}/>
-
               <div style={{display:"flex",gap:8,marginTop:14,borderTop:border,paddingTop:14}}>
                 <button onClick={zoomToRep} style={{...btn(false),flex:1}}>🔍 Zoom to Rep</button>
               </div>
             </div>
           )}
-
-          {/* ── ROUTE CHECK PANEL ── */}
           {panel==="route"&&(
             <div>
               <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9",marginBottom:14}}>Quick Route Check</div>
@@ -1921,9 +1711,59 @@ function RepMapTab({allReps,markets}){
               </div>
               <div style={{marginBottom:12}}>
                 <div style={sectionLbl}>To</div>
-                <input value={qTo} onChange={e=>setQTo(e.target.value)} onKeyDown={e=>e.key==="Enter"&&quickRoute()} placeholder="City or address" style={inp}/>
+                <input value={qTo} onChange={e=>setQTo(e.target.value)} onKeyDown={e=>e.key==="Enter"&&(async()=>{
+                  if(!qFrom.trim()||!qTo.trim())return;
+                  setQLoading(true);setQResult(null);
+                  try{
+                    const [fGeo,tGeo]=await Promise.all([nominatim(qFrom),nominatim(qTo)]);
+                    if(!fGeo||!tGeo){setQResult({error:"Could not locate one or both addresses"});setQLoading(false);return;}
+                    if(orsKey){
+                      const res=await fetch("https://api.openrouteservice.org/v2/directions/driving-car",{
+                        method:"POST",headers:{"Authorization":orsKey,"Content-Type":"application/json"},
+                        body:JSON.stringify({coordinates:[[fGeo.lng,fGeo.lat],[tGeo.lng,tGeo.lat]]})
+                      });
+                      const data=await res.json();
+                      if(data.routes?.[0]){
+                        const s=data.routes[0].summary;
+                        setQResult({miles:(s.distance*0.000621371).toFixed(1),time:fmtTime(Math.round(s.duration/60)),from:qFrom,to:qTo});
+                      }else{setQResult({error:data.error?.message||"Route not found"});}
+                    }else{
+                      const miles=(haversine(fGeo.lat,fGeo.lng,tGeo.lat,tGeo.lng)*1.3).toFixed(1);
+                      setQResult({miles:miles+"*",time:fmtTime(Math.round(miles/45*60))+"*",from:qFrom,to:qTo,est:true});
+                    }
+                  }catch(e){setQResult({error:"Network error: "+e.message});}
+                  setQLoading(false);
+                })()} placeholder="City or address" style={inp}/>
               </div>
-              <button onClick={quickRoute} disabled={qLoading} style={{...btn(true),width:"100%"}}>
+              <button onClick={async()=>{
+                if(!qFrom.trim()||!qTo.trim())return;
+                setQLoading(true);setQResult(null);
+                try{
+                  const [fGeo,tGeo]=await Promise.all([nominatim(qFrom),nominatim(qTo)]);
+                  if(!fGeo||!tGeo){setQResult({error:"Could not locate one or both addresses"});setQLoading(false);return;}
+                  if(orsKey){
+                    const res=await fetch("https://api.openrouteservice.org/v2/directions/driving-car",{
+                      method:"POST",headers:{"Authorization":orsKey,"Content-Type":"application/json"},
+                      body:JSON.stringify({coordinates:[[fGeo.lng,fGeo.lat],[tGeo.lng,tGeo.lat]]})
+                    });
+                    const data=await res.json();
+                    if(data.routes?.[0]){
+                      const s=data.routes[0].summary;
+                      setQResult({miles:(s.distance*0.000621371).toFixed(1),time:fmtTime(Math.round(s.duration/60)),from:qFrom,to:qTo});
+                      routeLayerRef.current?.clearLayers();
+                      L.polyline([[fGeo.lat,fGeo.lng],[tGeo.lat,tGeo.lng]],{color:"#34d399",weight:3,opacity:.7,dashArray:"6,6"}).addTo(routeLayerRef.current);
+                      leafletMap.current?.fitBounds([[fGeo.lat,fGeo.lng],[tGeo.lat,tGeo.lng]],{padding:[50,50]});
+                    }else{setQResult({error:data.error?.message||"Route not found"});}
+                  }else{
+                    const miles=(haversine(fGeo.lat,fGeo.lng,tGeo.lat,tGeo.lng)*1.3).toFixed(1);
+                    setQResult({miles:miles+"*",time:fmtTime(Math.round(miles/45*60))+"*",from:qFrom,to:qTo,est:true});
+                    routeLayerRef.current?.clearLayers();
+                    L.polyline([[fGeo.lat,fGeo.lng],[tGeo.lat,tGeo.lng]],{color:"#34d399",weight:3,opacity:.7,dashArray:"6,6"}).addTo(routeLayerRef.current);
+                    leafletMap.current?.fitBounds([[fGeo.lat,fGeo.lng],[tGeo.lat,tGeo.lng]],{padding:[50,50]});
+                  }
+                }catch(e){setQResult({error:"Network error: "+e.message});}
+                setQLoading(false);
+              }} disabled={qLoading} style={{...btn(true),width:"100%"}}>
                 {qLoading?"Calculating…":"Calculate"}
               </button>
               {qResult&&(
@@ -1946,19 +1786,14 @@ function RepMapTab({allReps,markets}){
               )}
             </div>
           )}
-
-          {/* ── SETTINGS PANEL ── */}
           {panel==="settings"&&(
             <div>
               <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9",marginBottom:14}}>Settings</div>
-
               <div style={{marginBottom:20}}>
                 <div style={sectionLbl}>OpenRouteService API Key</div>
                 <div style={{fontSize:11,color:"#64748b",marginBottom:8,lineHeight:1.6}}>
-                  Free routing API — 2,000 req/day. Get your key at{" "}
-                  <a href="https://openrouteservice.org/dev/#/signup" target="_blank"
-                    style={{color:"#38bdf8",textDecoration:"none"}}>openrouteservice.org</a>.
-                  Without it, distances are straight-line estimates.
+                  Free routing API. Get your key at{" "}
+                  <a href="https://openrouteservice.org/dev/#/signup" target="_blank" style={{color:"#38bdf8",textDecoration:"none"}}>openrouteservice.org</a>.
                 </div>
                 <div style={{display:"flex",gap:6}}>
                   <input type="password" value={orsKeyInput} onChange={e=>setOrsKeyInput(e.target.value)}
@@ -1966,27 +1801,17 @@ function RepMapTab({allReps,markets}){
                   <button onClick={()=>{setOrsKey(orsKeyInput);localStorage.setItem("ors_api_key",orsKeyInput);showToast("Key saved ✓","success");}}
                     style={{...btn(true),flexShrink:0}}>Save</button>
                 </div>
-                {orsKey&&<div style={{fontSize:10,color:"#4ade80",marginTop:5}}>✓ ORS key active — real road routing enabled</div>}
-              </div>
-
-              <div style={{borderTop:border,paddingTop:16}}>
-                <div style={sectionLbl}>About</div>
-                <div style={{fontSize:11,color:"#64748b",lineHeight:1.7}}>
-                  Rep locations and addresses are stored in Firebase and shared across all dispatchers.<br/><br/>
-                  Geocoding via OpenStreetMap Nominatim (free, Florida-biased).<br/><br/>
-                  Reps are auto-populated from uploaded R30/YTD data. Terminated reps are hidden automatically.
-                </div>
+                {orsKey&&<div style={{fontSize:10,color:"#4ade80",marginTop:5}}>✓ ORS key active</div>}
               </div>
             </div>
           )}
-
         </div>
       </div>
     </div>
   );
 }
 
-// ─── TRACKER TAB ─────────────────────────────────────────────────────────────
+// ─── TRACKER ─────────────────────────────────────────────────────────────────
 const DISPATCHERS=[
   {id:"RJ",name:"RJ",color:"#38bdf8",bg:"rgba(56,189,248,.12)"},
   {id:"BR",name:"BR",color:"#4ade80",bg:"rgba(74,222,128,.12)"},
@@ -2009,11 +1834,11 @@ function fmtElapsed(ms){
   return`${m}m ${sec}s`;
 }
 
-function ConfirmingForm({onSubmit,showSetter}){
+function ConfirmingForm({onSubmit}){
   const [form,setForm]=useState({
     customerName:"",promoter:"",apptDate:"Today",apptTime:"9AM",phone:"",address:"",
-    homeType:"SFH",residenceType:"PR",windows:"",doors:"",
-    sliders:"",originalWindows:"Yes",mainStructure:"Yes",noResize:"Yes",
+    homeType:"SFH",residenceType:"PR",windows:"",doors:"",sliders:"",
+    originalWindows:"Yes",mainStructure:"Yes",noResize:"Yes",
     maritalStatus:"Single",gateCode:"",notes:""
   });
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
@@ -2021,7 +1846,6 @@ function ConfirmingForm({onSubmit,showSetter}){
     color:"#e2e8f0",fontSize:12,fontFamily:"inherit",outline:"none",width:"100%"};
   const lbl={fontSize:10,color:"#64748b",letterSpacing:".06em",textTransform:"uppercase",marginBottom:4,display:"block"};
 
-  // Clickable button group selector
   const BtnGroup=({fieldKey,opts})=>(
     <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
       {opts.map(o=>{
@@ -2044,142 +1868,32 @@ function ConfirmingForm({onSubmit,showSetter}){
 
   return(
     <div>
-      {/* Customer Name — always shown */}
-      <div style={{marginBottom:10}}>
-        <span style={lbl}>Customer Name</span>
-        <input value={form.customerName} onChange={e=>set("customerName",e.target.value)}
-          placeholder="Full name" style={inp}/>
-      </div>
-
-      {/* Promoter — always shown */}
-      <div style={{marginBottom:10}}>
-        <span style={lbl}>Promoter</span>
-        <input value={form.promoter} onChange={e=>set("promoter",e.target.value)}
-          placeholder="Promoter name" style={inp}/>
-      </div>
-
-      {/* Appt Date */}
-      <div style={{marginBottom:10}}>
-        <span style={lbl}>Appt Date</span>
-        <BtnGroup fieldKey="apptDate" opts={[
-          {val:"Today",label:"Today"},{val:"Tomorrow",label:"Tomorrow"},{val:"72+",label:"72+"}
-        ]}/>
-      </div>
-
-      {/* Appt Time */}
-      <div style={{marginBottom:10}}>
-        <span style={lbl}>Appt Time</span>
-        <BtnGroup fieldKey="apptTime" opts={[
-          {val:"9AM",label:"9AM"},{val:"10AM",label:"10AM"},{val:"11AM",label:"11AM"},
-          {val:"1PM",label:"1PM"},{val:"2PM",label:"2PM"},{val:"3PM",label:"3PM"},
-          {val:"5PM",label:"5PM"},{val:"6PM",label:"6PM"},{val:"7PM",label:"7PM"}
-        ]}/>
-      </div>
-
-      {/* Phone */}
-      <div style={{marginBottom:10}}>
-        <span style={lbl}>Ph#</span>
-        <input value={form.phone} onChange={e=>set("phone",e.target.value)}
-          placeholder="(000) 000-0000" style={inp}/>
-      </div>
-
-      {/* Address */}
-      <div style={{marginBottom:10}}>
-        <span style={lbl}>Address</span>
-        <input value={form.address} onChange={e=>set("address",e.target.value)}
-          placeholder="Street, City, FL ZIP" style={inp}/>
-      </div>
-
-      {/* Home Type */}
-      <div style={{marginBottom:10}}>
-        <span style={lbl}>Home Type</span>
-        <BtnGroup fieldKey="homeType" opts={[
-          {val:"SFH",label:"SFH",sub:"(Single Family Home)"},
-          {val:"TH",label:"TH",sub:"(TownHome)"},
-          {val:"Condo",label:"Condo"},
-          {val:"Villa",label:"Villa"}
-        ]}/>
-      </div>
-
-      {/* Residence Type */}
-      <div style={{marginBottom:10}}>
-        <span style={lbl}>Residence Type</span>
-        <BtnGroup fieldKey="residenceType" opts={[
-          {val:"PR",label:"PR",sub:"(Primary Residence)"},
-          {val:"IP",label:"IP",sub:"(Investment Property)"}
-        ]}/>
-      </div>
-
-      {/* Counts row */}
+      <div style={{marginBottom:10}}><span style={lbl}>Customer Name</span><input value={form.customerName} onChange={e=>set("customerName",e.target.value)} placeholder="Full name" style={inp}/></div>
+      <div style={{marginBottom:10}}><span style={lbl}>Promoter</span><input value={form.promoter} onChange={e=>set("promoter",e.target.value)} placeholder="Promoter name" style={inp}/></div>
+      <div style={{marginBottom:10}}><span style={lbl}>Appt Date</span><BtnGroup fieldKey="apptDate" opts={[{val:"Today",label:"Today"},{val:"Tomorrow",label:"Tomorrow"},{val:"72+",label:"72+"}]}/></div>
+      <div style={{marginBottom:10}}><span style={lbl}>Appt Time</span><BtnGroup fieldKey="apptTime" opts={[{val:"9AM",label:"9AM"},{val:"10AM",label:"10AM"},{val:"11AM",label:"11AM"},{val:"1PM",label:"1PM"},{val:"2PM",label:"2PM"},{val:"3PM",label:"3PM"},{val:"5PM",label:"5PM"},{val:"6PM",label:"6PM"},{val:"7PM",label:"7PM"}]}/></div>
+      <div style={{marginBottom:10}}><span style={lbl}>Ph#</span><input value={form.phone} onChange={e=>set("phone",e.target.value)} placeholder="(000) 000-0000" style={inp}/></div>
+      <div style={{marginBottom:10}}><span style={lbl}>Address</span><input value={form.address} onChange={e=>set("address",e.target.value)} placeholder="Street, City, FL ZIP" style={inp}/></div>
+      <div style={{marginBottom:10}}><span style={lbl}>Home Type</span><BtnGroup fieldKey="homeType" opts={[{val:"SFH",label:"SFH",sub:"(Single Family Home)"},{val:"TH",label:"TH",sub:"(TownHome)"},{val:"Condo",label:"Condo"},{val:"Villa",label:"Villa"}]}/></div>
+      <div style={{marginBottom:10}}><span style={lbl}>Residence Type</span><BtnGroup fieldKey="residenceType" opts={[{val:"PR",label:"PR",sub:"(Primary Residence)"},{val:"IP",label:"IP",sub:"(Investment Property)"}]}/></div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
-        <div>
-          <span style={lbl}>Windows</span>
-          <input value={form.windows} onChange={e=>set("windows",e.target.value)} placeholder="0" style={inp}/>
-        </div>
-        <div>
-          <span style={lbl}>Doors</span>
-          <input value={form.doors} onChange={e=>set("doors",e.target.value)} placeholder="0" style={inp}/>
-        </div>
-        <div>
-          <span style={lbl}>Sliders</span>
-          <input value={form.sliders} onChange={e=>set("sliders",e.target.value)} placeholder="0" style={inp}/>
-        </div>
+        <div><span style={lbl}>Windows</span><input value={form.windows} onChange={e=>set("windows",e.target.value)} placeholder="0" style={inp}/></div>
+        <div><span style={lbl}>Doors</span><input value={form.doors} onChange={e=>set("doors",e.target.value)} placeholder="0" style={inp}/></div>
+        <div><span style={lbl}>Sliders</span><input value={form.sliders} onChange={e=>set("sliders",e.target.value)} placeholder="0" style={inp}/></div>
       </div>
-
-      {/* Original Windows */}
-      <div style={{marginBottom:10}}>
-        <span style={lbl}>Original Windows</span>
-        <BtnGroup fieldKey="originalWindows" opts={[{val:"Yes",label:"Yes"},{val:"No",label:"No"}]}/>
-      </div>
-
-      {/* Main Structure */}
-      <div style={{marginBottom:10}}>
-        <span style={lbl}>Main Structure</span>
-        <BtnGroup fieldKey="mainStructure" opts={[{val:"Yes",label:"Yes"},{val:"No",label:"No"}]}/>
-      </div>
-
-      {/* No Resize */}
-      <div style={{marginBottom:10}}>
-        <span style={lbl}>No Resize</span>
-        <BtnGroup fieldKey="noResize" opts={[{val:"Yes",label:"Yes"},{val:"No",label:"No"}]}/>
-      </div>
-
-      {/* Marital Status */}
-      <div style={{marginBottom:10}}>
-        <span style={lbl}>Marital Status</span>
-        <BtnGroup fieldKey="maritalStatus" opts={[
-          {val:"Single",label:"Single"},{val:"Married",label:"Married"},
-          {val:"Partners",label:"Partners"},{val:"Siblings",label:"Siblings"},
-          {val:"Family/Friends",label:"Family/Friends"}
-        ]}/>
-      </div>
-
-      {/* Gate Code */}
-      <div style={{marginBottom:10}}>
-        <span style={lbl}>Gate Code</span>
-        <input value={form.gateCode} onChange={e=>set("gateCode",e.target.value)}
-          placeholder="If applicable" style={inp}/>
-      </div>
-
-      {/* Notes */}
-      <div style={{marginBottom:12}}>
-        <span style={lbl}>Notes</span>
-        <textarea value={form.notes} onChange={e=>set("notes",e.target.value)}
-          placeholder="Additional notes..."
-          style={{...inp,minHeight:60,resize:"vertical"}}/>
-      </div>
-
-      <button onClick={()=>onSubmit(form)} style={{
-        width:"100%",padding:"10px 0",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",
-        border:"none",borderRadius:7,color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"
-      }}>Submit Log Entry</button>
+      <div style={{marginBottom:10}}><span style={lbl}>Original Windows</span><BtnGroup fieldKey="originalWindows" opts={[{val:"Yes",label:"Yes"},{val:"No",label:"No"}]}/></div>
+      <div style={{marginBottom:10}}><span style={lbl}>Main Structure</span><BtnGroup fieldKey="mainStructure" opts={[{val:"Yes",label:"Yes"},{val:"No",label:"No"}]}/></div>
+      <div style={{marginBottom:10}}><span style={lbl}>No Resize</span><BtnGroup fieldKey="noResize" opts={[{val:"Yes",label:"Yes"},{val:"No",label:"No"}]}/></div>
+      <div style={{marginBottom:10}}><span style={lbl}>Marital Status</span><BtnGroup fieldKey="maritalStatus" opts={[{val:"Single",label:"Single"},{val:"Married",label:"Married"},{val:"Partners",label:"Partners"},{val:"Siblings",label:"Siblings"},{val:"Family/Friends",label:"Family/Friends"}]}/></div>
+      <div style={{marginBottom:10}}><span style={lbl}>Gate Code</span><input value={form.gateCode} onChange={e=>set("gateCode",e.target.value)} placeholder="If applicable" style={inp}/></div>
+      <div style={{marginBottom:12}}><span style={lbl}>Notes</span><textarea value={form.notes} onChange={e=>set("notes",e.target.value)} placeholder="Additional notes..." style={{...inp,minHeight:60,resize:"vertical"}}/></div>
+      <button onClick={()=>onSubmit(form)} style={{width:"100%",padding:"10px 0",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:7,color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Submit Log Entry</button>
     </div>
   );
 }
 
 function TrackerTab({allReps,markets}){
   const [dispatcher,setDispatcher]=useState(()=>localStorage.getItem("tracker_dispatcher")||null);
-  const [slide,setSlide]=useState(1); // 1=type, 2=details
   const [interactionType,setInteractionType]=useState(null);
   const [selectedRep,setSelectedRep]=useState("");
   const [repSearch,setRepSearch]=useState("");
@@ -2191,28 +1905,16 @@ function TrackerTab({allReps,markets}){
   const [trackerView,setTrackerView]=useState("intake");
   const now=useNow();
 
-  // Load log from Firebase on mount + poll every 10s for real-time
   useEffect(()=>{
-    const load=async()=>{
-      const d=await db.get("tracker_log");
-      if(d&&Array.isArray(d))setLog(d);
-    };
+    const load=async()=>{const d=await db.get("tracker_log");if(d&&Array.isArray(d))setLog(d);};
     load();
     const iv=setInterval(load,10000);
     return()=>clearInterval(iv);
   },[]);
 
-  const saveLog=async(newLog)=>{
-    setLog(newLog);
-    await db.set("tracker_log",newLog.slice(-200)); // keep last 200 entries
-  };
-
-  const selectDispatcher=(id)=>{
-    setDispatcher(id);
-    localStorage.setItem("tracker_dispatcher",id);
-  };
-
-  const resetFlow=()=>{setSlide(1);setInteractionType(null);setSelectedRep("");setRepSearch("");setDispatchSubtype("");setDispatchNote("");setOtherNote("");};
+  const saveLog=async(newLog)=>{setLog(newLog);await db.set("tracker_log",newLog.slice(-200));};
+  const selectDispatcher=(id)=>{setDispatcher(id);localStorage.setItem("tracker_dispatcher",id);};
+  const resetFlow=()=>{setInteractionType(null);setSelectedRep("");setRepSearch("");setDispatchSubtype("");setDispatchNote("");setOtherNote("");};
 
   const activeReps=useMemo(()=>{
     const seen=new Set();const list=[];
@@ -2232,47 +1934,28 @@ function TrackerTab({allReps,markets}){
     }
     const entry={
       id:Date.now()+"_"+Math.random().toString(36).slice(2,7),
-      dispatcher,
-      type:interactionType,
-      rep:selectedRep||null,
-      subtype:dispatchSubtype||null,
+      dispatcher,type:interactionType,rep:selectedRep||null,subtype:dispatchSubtype||null,
       note:interactionType==="Other"?(otherNote||null):autoNote,
-      dispatchNote:dispatchNote||null,
-      form:formData||null,
-      timestamp:Date.now(),
-      status:"active",
-      completedAt:null,
+      dispatchNote:dispatchNote||null,form:formData||null,
+      timestamp:Date.now(),status:"active",completedAt:null,
     };
-    const newLog=[entry,...log];
-    saveLog(newLog);
+    saveLog([entry,...log]);
     resetFlow();
   };
 
-  const submitDispatch=()=>{
-    if(!selectedRep||!dispatchSubtype)return;
-    submitEntry(null);
-  };
-
-  const markComplete=(id)=>{
-    const newLog=log.map(e=>e.id===id?{...e,status:"done",completedAt:Date.now()}:e);
-    saveLog(newLog);
-  };
+  const markComplete=(id)=>{saveLog(log.map(e=>e.id===id?{...e,status:"done",completedAt:Date.now()}:e));};
 
   const urgent=log.filter(e=>e.status==="active"&&(now-e.timestamp)>=URGENT_MS);
   const active=log.filter(e=>e.status==="active"&&(now-e.timestamp)<URGENT_MS);
   const done=log.filter(e=>e.status==="done");
 
-  const filteredLog=[...urgent,...active,...done].filter(e=>
-    filterDispatcher==="All"||e.dispatcher===filterDispatcher
-  );
+  const filteredLog=[...urgent,...active,...done].filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher);
 
   const dispColor=id=>DISPATCHERS.find(d=>d.id===id)?.color??"#64748b";
   const typeColor=t=>t==="Dispatch"?"#38bdf8":t==="Setting"?"#4ade80":t==="Confirming"?"#f59e0b":t==="Other"?"#a78bfa":"#64748b";
 
   const LogEntry=({entry})=>{
-    const elapsed=entry.status==="done"
-      ?entry.completedAt-entry.timestamp
-      :now-entry.timestamp;
+    const elapsed=entry.status==="done"?entry.completedAt-entry.timestamp:now-entry.timestamp;
     const isUrgent=entry.status==="active"&&elapsed>=URGENT_MS;
     const isDone=entry.status==="done";
     const dc=dispColor(entry.dispatcher);
@@ -2283,62 +1966,38 @@ function TrackerTab({allReps,markets}){
       navigator.clipboard.writeText(entry.note).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);});
     };
     return(
-      <div style={{
-        background:isDone?"#080c14":isUrgent?"rgba(239,68,68,.06)":"#0d1120",
+      <div style={{background:isDone?"#080c14":isUrgent?"rgba(239,68,68,.06)":"#0d1120",
         border:`1px solid ${isDone?"#1e2a3a":isUrgent?"rgba(239,68,68,.4)":"#1e2a3a"}`,
-        borderRadius:8,padding:"10px 14px",marginBottom:6,
-        opacity:isDone?.65:1,
-        transition:"all .3s"
-      }}>
+        borderRadius:8,padding:"10px 14px",marginBottom:6,opacity:isDone?.65:1}}>
         <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-          {isUrgent&&<span style={{fontSize:10,fontWeight:800,color:"#ef4444",
-            background:"rgba(239,68,68,.15)",padding:"2px 7px",borderRadius:4,animation:"pulse 1.5s infinite"}}>
-            🚨 URGENT
-          </span>}
+          {isUrgent&&<span style={{fontSize:10,fontWeight:800,color:"#ef4444",background:"rgba(239,68,68,.15)",padding:"2px 7px",borderRadius:4,animation:"pulse 1.5s infinite"}}>🚨 URGENT</span>}
           {isDone&&<span style={{fontSize:10,color:"#4ade80",fontWeight:700}}>✓ DONE</span>}
-          <span style={{fontSize:12,fontWeight:700,color:dc,background:`${dc}18`,
-            padding:"2px 8px",borderRadius:4}}>{entry.dispatcher}</span>
+          <span style={{fontSize:12,fontWeight:700,color:dc,background:`${dc}18`,padding:"2px 8px",borderRadius:4}}>{entry.dispatcher}</span>
           <span style={{fontSize:12,fontWeight:600,color:tc}}>{entry.type}</span>
           {entry.rep&&<span style={{fontSize:11,color:"#94a3b8"}}>→ {entry.rep}</span>}
-          {entry.subtype&&<span style={{fontSize:11,color:"#64748b",background:"#1e2a3a",
-            padding:"1px 6px",borderRadius:3}}>{entry.subtype}</span>}
-          {entry.form&&entry.form.customerName&&
-            <span style={{fontSize:10,color:"#64748b"}}>👤 {entry.form.customerName}</span>}
-          {entry.form&&entry.form.promoter&&
-            <span style={{fontSize:10,color:"#64748b"}}>📢 {entry.form.promoter}</span>}
+          {entry.subtype&&<span style={{fontSize:11,color:"#64748b",background:"#1e2a3a",padding:"1px 6px",borderRadius:3}}>{entry.subtype}</span>}
+          {entry.form?.customerName&&<span style={{fontSize:10,color:"#64748b"}}>👤 {entry.form.customerName}</span>}
+          {entry.form?.promoter&&<span style={{fontSize:10,color:"#64748b"}}>📢 {entry.form.promoter}</span>}
           {entry.form&&(entry.type==="Setting"||entry.type==="Confirming")&&(
-            <span style={{fontSize:10,color:"#64748b"}}>
-              {entry.form.apptDate} @ {entry.form.apptTime} · {entry.form.homeType}
-            </span>
+            <span style={{fontSize:10,color:"#64748b"}}>{entry.form.apptDate} @ {entry.form.apptTime} · {entry.form.homeType}</span>
           )}
           <div style={{flex:1}}/>
           <span style={{fontSize:11,color:isDone?"#4ade80":isUrgent?"#ef4444":"#64748b",fontWeight:isUrgent?700:400,fontFamily:"monospace"}}>
             {fmtElapsed(elapsed)}{isDone?" total":""}
           </span>
-          <span style={{fontSize:10,color:"#334155"}}>
-            {new Date(entry.timestamp).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
-          </span>
+          <span style={{fontSize:10,color:"#334155"}}>{new Date(entry.timestamp).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>
           {!isDone&&(
-            <button onClick={()=>markComplete(entry.id)} style={{
-              background:"rgba(74,222,128,.12)",border:"1px solid rgba(74,222,128,.3)",
-              borderRadius:5,padding:"3px 10px",color:"#4ade80",cursor:"pointer",
-              fontSize:11,fontWeight:700,fontFamily:"inherit"
-            }}>✓ Done</button>
+            <button onClick={()=>markComplete(entry.id)} style={{background:"rgba(74,222,128,.12)",border:"1px solid rgba(74,222,128,.3)",borderRadius:5,padding:"3px 10px",color:"#4ade80",cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:"inherit"}}>✓ Done</button>
           )}
         </div>
         {entry.note&&(
           <div style={{marginTop:8,display:"flex",alignItems:"flex-start",gap:8}}>
-            <div style={{flex:1,fontSize:11,color:"#94a3b8",fontStyle:"italic",
-              background:"rgba(255,255,255,.03)",border:"1px solid #1e2a3a",
-              borderRadius:6,padding:"7px 10px",lineHeight:1.6,wordBreak:"break-word"}}>
+            <div style={{flex:1,fontSize:11,color:"#94a3b8",fontStyle:"italic",background:"rgba(255,255,255,.03)",border:"1px solid #1e2a3a",borderRadius:6,padding:"7px 10px",lineHeight:1.6,wordBreak:"break-word"}}>
               {entry.note}
             </div>
-            <button onClick={copyNote} style={{
-              flexShrink:0,background:copied?"rgba(74,222,128,.12)":"rgba(255,255,255,.04)",
-              border:`1px solid ${copied?"rgba(74,222,128,.3)":"#1e2a3a"}`,
-              borderRadius:5,padding:"6px 10px",color:copied?"#4ade80":"#475569",
-              cursor:"pointer",fontSize:11,fontFamily:"inherit",transition:"all .2s",whiteSpace:"nowrap"
-            }}>{copied?"✓ Copied":"📋 Copy"}</button>
+            <button onClick={copyNote} style={{flexShrink:0,background:copied?"rgba(74,222,128,.12)":"rgba(255,255,255,.04)",border:`1px solid ${copied?"rgba(74,222,128,.3)":"#1e2a3a"}`,borderRadius:5,padding:"6px 10px",color:copied?"#4ade80":"#475569",cursor:"pointer",fontSize:11,fontFamily:"inherit",whiteSpace:"nowrap"}}>
+              {copied?"✓ Copied":"📋 Copy"}
+            </button>
           </div>
         )}
         {entry.form&&(entry.type==="Setting"||entry.type==="Confirming")&&(
@@ -2356,21 +2015,17 @@ function TrackerTab({allReps,markets}){
     );
   };
 
-  const sel={background:"#080c14",border:"1px solid #1e2a3a",borderRadius:6,
-    padding:"7px 10px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",outline:"none"};
-
   return(
-    <div style={{height:"calc(100vh - 52px)",overflow:"hidden",display:"flex",flexDirection:"column",background:"#080c14"}}>
-
-      {/* Toggle bar */}
+    <div style={{height:"calc(100vh - 104px)",overflow:"hidden",display:"flex",flexDirection:"column",background:"#080c14"}}>
       <div style={{background:"#0d1120",borderBottom:"1px solid #1e2a3a",padding:"10px 20px",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
         <div style={{display:"flex",background:"#080c14",border:"1px solid #1e2a3a",borderRadius:8,padding:3,gap:3}}>
           {[["intake","📋 Intake"],["log","📄 Activity Log"]].map(([v,label])=>(
             <button key={v} onClick={()=>setTrackerView(v)} style={{
               padding:"6px 18px",borderRadius:6,fontFamily:"inherit",fontSize:12,cursor:"pointer",border:"none",
               background:trackerView===v?"linear-gradient(135deg,#0ea5e9,#6366f1)":"transparent",
-              color:trackerView===v?"#fff":"#475569",fontWeight:trackerView===v?700:400,transition:"all .15s"
-            }}>{label}</button>
+              color:trackerView===v?"#fff":"#475569",fontWeight:trackerView===v?700:400}}>
+              {label}
+            </button>
           ))}
         </div>
         {trackerView==="log"&&(
@@ -2387,18 +2042,10 @@ function TrackerTab({allReps,markets}){
             ))}
           </div>
         )}
-        {trackerView==="log"&&(
-          <span style={{fontSize:11,color:"#334155"}}>
-            {log.length} entries · updates every 10s
-          </span>
-        )}
       </div>
 
-      {/* INTAKE VIEW */}
       {trackerView==="intake"&&(
         <div style={{flex:1,overflowY:"auto",maxWidth:480,width:"100%",padding:20,alignSelf:"center"}}>
-
-          {/* Dispatcher selector */}
           <div style={{marginBottom:20}}>
             <div style={{fontSize:10,color:"#334155",letterSpacing:".08em",marginBottom:10,textTransform:"uppercase"}}>Who are you?</div>
             <div style={{display:"flex",gap:8}}>
@@ -2406,20 +2053,13 @@ function TrackerTab({allReps,markets}){
                 <div key={d.id} onClick={()=>selectDispatcher(d.id)} style={{
                   flex:1,padding:"14px 8px",borderRadius:8,textAlign:"center",cursor:"pointer",
                   border:`2px solid ${dispatcher===d.id?d.color:"#1e2a3a"}`,
-                  background:dispatcher===d.id?d.bg:"#080c14",transition:"all .15s"
-                }}>
+                  background:dispatcher===d.id?d.bg:"#080c14"}}>
                   <div style={{fontSize:22,fontWeight:900,color:dispatcher===d.id?d.color:"#334155",lineHeight:1}}>{d.id}</div>
                 </div>
               ))}
             </div>
           </div>
-
-          {!dispatcher&&(
-            <div style={{textAlign:"center",color:"#334155",padding:"40px 0",fontSize:13}}>
-              Select your name above to begin logging
-            </div>
-          )}
-
+          {!dispatcher&&<div style={{textAlign:"center",color:"#334155",padding:"40px 0",fontSize:13}}>Select your name above to begin logging</div>}
           {dispatcher&&(
             <>
               {!interactionType&&(
@@ -2427,30 +2067,27 @@ function TrackerTab({allReps,markets}){
                   <div style={{fontSize:10,color:"#334155",letterSpacing:".08em",marginBottom:10,textTransform:"uppercase"}}>Interaction Type</div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                     {INTERACTION_TYPES.map(t=>(
-                      <div key={t} onClick={()=>{setInteractionType(t);setSlide(2);}} style={{
+                      <div key={t} onClick={()=>setInteractionType(t)} style={{
                         padding:"18px 10px",borderRadius:8,textAlign:"center",cursor:"pointer",
                         border:`1.5px solid ${typeColor(t)}22`,background:`${typeColor(t)}0a`,
-                        color:typeColor(t),fontWeight:700,fontSize:13,transition:"all .15s"
-                      }}>{t}</div>
+                        color:typeColor(t),fontWeight:700,fontSize:13}}>
+                        {t}
+                      </div>
                     ))}
                   </div>
                 </div>
               )}
-
               {interactionType&&(
                 <div>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                     <div style={{fontSize:12,fontWeight:700,color:typeColor(interactionType)}}>{interactionType}</div>
                     <button onClick={resetFlow} style={{background:"none",border:"none",color:"#334155",cursor:"pointer",fontSize:11,fontFamily:"inherit"}}>✕ Reset</button>
                   </div>
-
-                  {/* DISPATCH */}
                   {interactionType==="Dispatch"&&(
                     <div>
                       <div style={{marginBottom:12,position:"relative"}}>
                         <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:6,textTransform:"uppercase"}}>Rep</div>
-                        <input value={repSearch}
-                          onChange={e=>{setRepSearch(e.target.value);setSelectedRep("");}}
+                        <input value={repSearch} onChange={e=>{setRepSearch(e.target.value);setSelectedRep("");}}
                           placeholder="Type first or last name..."
                           style={{background:"#080c14",border:`1px solid ${selectedRep?"#38bdf8":"#1e2a3a"}`,borderRadius:6,
                             padding:"7px 10px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",outline:"none",width:"100%"}}/>
@@ -2460,8 +2097,8 @@ function TrackerTab({allReps,markets}){
                             <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:20,
                               background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:6,maxHeight:160,overflowY:"auto",marginTop:2}}>
                               {filtered.map(r=>(
-                                <div key={r} onMouseDown={()=>{setSelectedRep(r);setRepSearch(r);}} style={{
-                                  padding:"8px 10px",cursor:"pointer",fontSize:12,color:"#94a3b8",borderBottom:"1px solid #1e2a3a"}}
+                                <div key={r} onMouseDown={()=>{setSelectedRep(r);setRepSearch(r);}}
+                                  style={{padding:"8px 10px",cursor:"pointer",fontSize:12,color:"#94a3b8",borderBottom:"1px solid #1e2a3a"}}
                                   onMouseEnter={e=>e.currentTarget.style.background="rgba(56,189,248,.08)"}
                                   onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{r}</div>
                               ))}
@@ -2486,8 +2123,9 @@ function TrackerTab({allReps,markets}){
                               padding:"8px 10px",borderRadius:6,cursor:"pointer",textAlign:"center",fontSize:11,
                               border:`1.5px solid ${dispatchSubtype===s?"#38bdf8":"#1e2a3a"}`,
                               background:dispatchSubtype===s?"rgba(56,189,248,.1)":"#080c14",
-                              color:dispatchSubtype===s?"#38bdf8":"#64748b",transition:"all .15s"
-                            }}>{s}</div>
+                              color:dispatchSubtype===s?"#38bdf8":"#64748b"}}>
+                              {s}
+                            </div>
                           ))}
                         </div>
                       </div>
@@ -2495,73 +2133,36 @@ function TrackerTab({allReps,markets}){
                         <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Note (optional)</div>
                         <textarea value={dispatchNote} onChange={e=>setDispatchNote(e.target.value)}
                           placeholder="Additional detail..."
-                          style={{background:"#080c14",border:"1px solid #1e2a3a",borderRadius:6,
-                            padding:"8px 10px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",
-                            outline:"none",width:"100%",minHeight:60,resize:"vertical"}}/>
+                          style={{background:"#080c14",border:"1px solid #1e2a3a",borderRadius:6,padding:"8px 10px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",outline:"none",width:"100%",minHeight:60,resize:"vertical"}}/>
                         {selectedRep&&dispatchSubtype&&(
-                          <div style={{marginTop:6,padding:"7px 10px",background:"rgba(56,189,248,.05)",
-                            border:"1px solid rgba(56,189,248,.15)",borderRadius:6,fontSize:10,color:"#64748b",lineHeight:1.6,fontStyle:"italic"}}>
+                          <div style={{marginTop:6,padding:"7px 10px",background:"rgba(56,189,248,.05)",border:"1px solid rgba(56,189,248,.15)",borderRadius:6,fontSize:10,color:"#64748b",lineHeight:1.6,fontStyle:"italic"}}>
                             📋 Preview: <span style={{color:"#94a3b8"}}>Rep {(()=>{const p=selectedRep.includes(",")?selectedRep.split(",").map(s=>s.trim()):null;return p?`${p[1]} ${p[0]}`:selectedRep;})()}, called in [time] stating {dispatchSubtype}{dispatchNote.trim()?" - "+dispatchNote.trim():""}</span>
                           </div>
                         )}
                       </div>
-                      <button onClick={submitDispatch} disabled={!selectedRep||!dispatchSubtype}
-                        style={{width:"100%",padding:"10px 0",
-                          background:(!selectedRep||!dispatchSubtype)?"#1e2a3a":"linear-gradient(135deg,#0ea5e9,#6366f1)",
-                          border:"none",borderRadius:7,color:(!selectedRep||!dispatchSubtype)?"#334155":"#fff",
-                          fontWeight:700,fontSize:13,cursor:(!selectedRep||!dispatchSubtype)?"not-allowed":"pointer",fontFamily:"inherit"
-                        }}>Log Entry</button>
+                      <button onClick={()=>{if(!selectedRep||!dispatchSubtype)return;submitEntry(null);}} disabled={!selectedRep||!dispatchSubtype}
+                        style={{width:"100%",padding:"10px 0",background:(!selectedRep||!dispatchSubtype)?"#1e2a3a":"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:7,color:(!selectedRep||!dispatchSubtype)?"#334155":"#fff",fontWeight:700,fontSize:13,cursor:(!selectedRep||!dispatchSubtype)?"not-allowed":"pointer",fontFamily:"inherit"}}>Log Entry</button>
                     </div>
                   )}
-
-                  {/* SETTING — no rep selector */}
-                  {interactionType==="Setting"&&(
-                    <ConfirmingForm onSubmit={submitEntry} showSetter={false}/>
-                  )}
-
-                  {/* CONFIRMING — no rep selector */}
-                  {interactionType==="Confirming"&&(
-                    <ConfirmingForm onSubmit={submitEntry} showSetter={true}/>
-                  )}
-
-                  {/* OTHER */}
+                  {(interactionType==="Setting"||interactionType==="Confirming")&&<ConfirmingForm onSubmit={submitEntry}/>}
                   {interactionType==="Other"&&(
                     <div>
                       <div style={{marginBottom:12}}>
                         <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>Rep (optional)</div>
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,maxHeight:160,overflowY:"auto"}}>
-                          <div onClick={()=>setSelectedRep("")} style={{
-                            padding:"7px 10px",borderRadius:6,cursor:"pointer",fontSize:11,
-                            border:`1.5px solid ${selectedRep===""?"#a78bfa":"#1e2a3a"}`,
-                            background:selectedRep===""?"rgba(167,139,250,.12)":"#080c14",
-                            color:selectedRep===""?"#e2e8f0":"#64748b",
-                            transition:"all .12s",textAlign:"center",fontStyle:"italic"
-                          }}>— none —</div>
+                          <div onClick={()=>setSelectedRep("")} style={{padding:"7px 10px",borderRadius:6,cursor:"pointer",fontSize:11,border:`1.5px solid ${selectedRep===""?"#a78bfa":"#1e2a3a"}`,background:selectedRep===""?"rgba(167,139,250,.12)":"#080c14",color:selectedRep===""?"#e2e8f0":"#64748b",textAlign:"center",fontStyle:"italic"}}>— none —</div>
                           {activeReps.map(r=>(
-                            <div key={r} onClick={()=>setSelectedRep(r)} style={{
-                              padding:"7px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:selectedRep===r?700:400,
-                              border:`1.5px solid ${selectedRep===r?"#a78bfa":"#1e2a3a"}`,
-                              background:selectedRep===r?"rgba(167,139,250,.12)":"#080c14",
-                              color:selectedRep===r?"#e2e8f0":"#64748b",
-                              transition:"all .12s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"
-                            }}>{r}</div>
+                            <div key={r} onClick={()=>setSelectedRep(r)} style={{padding:"7px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:selectedRep===r?700:400,border:`1.5px solid ${selectedRep===r?"#a78bfa":"#1e2a3a"}`,background:selectedRep===r?"rgba(167,139,250,.12)":"#080c14",color:selectedRep===r?"#e2e8f0":"#64748b",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r}</div>
                           ))}
                         </div>
                       </div>
                       <div style={{marginBottom:12}}>
                         <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Note</div>
-                        <textarea value={otherNote} onChange={e=>setOtherNote(e.target.value)}
-                          placeholder="What happened?"
-                          style={{background:"#080c14",border:"1px solid #1e2a3a",borderRadius:6,
-                            padding:"8px 10px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",
-                            outline:"none",width:"100%",minHeight:80,resize:"vertical"}}/>
+                        <textarea value={otherNote} onChange={e=>setOtherNote(e.target.value)} placeholder="What happened?"
+                          style={{background:"#080c14",border:"1px solid #1e2a3a",borderRadius:6,padding:"8px 10px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",outline:"none",width:"100%",minHeight:80,resize:"vertical"}}/>
                       </div>
                       <button onClick={()=>submitEntry(null)} disabled={!otherNote.trim()}
-                        style={{width:"100%",padding:"10px 0",
-                          background:!otherNote.trim()?"#1e2a3a":"linear-gradient(135deg,#a78bfa,#6366f1)",
-                          border:"none",borderRadius:7,color:!otherNote.trim()?"#334155":"#fff",
-                          fontWeight:700,fontSize:13,cursor:!otherNote.trim()?"not-allowed":"pointer",fontFamily:"inherit"
-                        }}>Log Entry</button>
+                        style={{width:"100%",padding:"10px 0",background:!otherNote.trim()?"#1e2a3a":"linear-gradient(135deg,#a78bfa,#6366f1)",border:"none",borderRadius:7,color:!otherNote.trim()?"#334155":"#fff",fontWeight:700,fontSize:13,cursor:!otherNote.trim()?"not-allowed":"pointer",fontFamily:"inherit"}}>Log Entry</button>
                     </div>
                   )}
                 </div>
@@ -2571,7 +2172,6 @@ function TrackerTab({allReps,markets}){
         </div>
       )}
 
-      {/* LOG VIEW */}
       {trackerView==="log"&&(
         <div style={{flex:1,overflowY:"auto",padding:20}}>
           {urgent.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).length>0&&(
@@ -2589,26 +2189,42 @@ function TrackerTab({allReps,markets}){
           {active.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).map(e=><LogEntry key={e.id} entry={e}/>)}
           {done.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).length>0&&(
             <div style={{marginTop:16}}>
-              <div style={{fontSize:10,color:"#1e2a3a",letterSpacing:".08em",textTransform:"uppercase",marginBottom:8,paddingTop:8,borderTop:"1px solid #1e2a3a"}}>
-                Completed
-              </div>
+              <div style={{fontSize:10,color:"#1e2a3a",letterSpacing:".08em",textTransform:"uppercase",marginBottom:8,paddingTop:8,borderTop:"1px solid #1e2a3a"}}>Completed</div>
               {done.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).map(e=><LogEntry key={e.id} entry={e}/>)}
             </div>
           )}
-          {filteredLog.length===0&&(
-            <div style={{textAlign:"center",color:"#1e2a3a",padding:"60px 0",fontSize:13}}>
-              No activity logged yet
-            </div>
-          )}
+          {filteredLog.length===0&&<div style={{textAlign:"center",color:"#1e2a3a",padding:"60px 0",fontSize:13}}>No activity logged yet</div>}
         </div>
       )}
     </div>
   );
 }
 
+// ─── SUB NAV BAR ─────────────────────────────────────────────────────────────
+function SubNavBar({items,active,onChange,accent}){
+  return(
+    <div style={{background:"#0d1120",borderBottom:"1px solid #1e2a3a",padding:"10px 20px",display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+      <div style={{display:"flex",background:"#080c14",border:"1px solid #1e2a3a",borderRadius:8,padding:3,gap:3}}>
+        {items.map(([v,label])=>(
+          <button key={v} onClick={()=>onChange(v)} style={{
+            padding:"6px 18px",borderRadius:6,fontFamily:"inherit",fontSize:12,cursor:"pointer",border:"none",
+            background:active===v?`linear-gradient(135deg,${accent||"#0ea5e9"},${accent?"transparent":"#6366f1"})`:"transparent",
+            backgroundImage:active===v?`linear-gradient(135deg,${accent||"#0ea5e9"},${accent==="single"?accent:"#6366f1"})`:"none",
+            backgroundColor:active===v?(accent||"#0ea5e9"):"transparent",
+            color:active===v?"#fff":"#475569",fontWeight:active===v?700:400,transition:"all .15s",
+            boxShadow:active===v?"0 1px 6px rgba(0,0,0,.3)":"none"
+          }}>{label}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── MAIN APP ────────────────────────────────────────────────────────────────
 function App(){
-  const [tab,setTab]=useState("r30");
+  const [mainTab,setMainTab]=useState("sales");
+  const [salesSub,setSalesSub]=useState("r30");
+  const [dispatchSub,setDispatchSub]=useState("tracker");
   const [r30,setR30]=useState(null);
   const [ytd,setYtd]=useState(null);
   const [history,setHistory]=useState([]);
@@ -2616,12 +2232,12 @@ function App(){
   const [uploadWin,setUploadWin]=useState("r30");
   const [msg,setMsg]=useState("");
   const [search,setSearch]=useState("");
-  const [marketFilter,setMarketFilter]=useState(""); // "" = all markets
+  const [marketFilter,setMarketFilter]=useState("");
   const [sort,setSort]=useState({f:"rank",d:"asc"});
   const [scorecard,setScorecard]=useState(null);
   const [modal,setModal]=useState(false);
-  const [markets,setMarkets]=useState({});   // { repName: marketName }
-  const [marketList,setMarketList]=useState([]); // unique market names
+  const [markets,setMarkets]=useState({});
+  const [marketList,setMarketList]=useState([]);
   const fileRef=useRef();
 
   useEffect(()=>{
@@ -2629,8 +2245,7 @@ function App(){
       const r=await db.get("r30");if(r)setR30(r);
       const y=await db.get("ytd");if(y)setYtd(y);
       const h=await db.get("history");if(h)setHistory(Array.isArray(h)?h:[]);
-      const m=await db.get("markets");
-      if(m){setMarkets(m.assignments||{});setMarketList(m.list||[]);}
+      const m=await db.get("markets");if(m){setMarkets(m.assignments||{});setMarketList(m.list||[]);}
     })();
     const iv=setInterval(async()=>{
       const r=await db.get("r30");if(r)setR30(r);
@@ -2641,14 +2256,16 @@ function App(){
     return()=>clearInterval(iv);
   },[]);
 
-  const cur=tab==="r30"?r30:tab==="ytd"?ytd:r30;
+  // Current data source for sales views
+  const cur=(salesSub==="r30"||salesSub==="trends"||salesSub==="deep")?r30:salesSub==="ytd"?ytd:r30;
+  const curForTable=salesSub==="ytd"?ytd:r30;
 
   const teamAvgs=useMemo(()=>{
-    const src=cur?.reps?.filter(r=>r.tier!=="⛔ Excluded")||[];
+    const src=curForTable?.reps?.filter(r=>r.tier!=="⛔ Excluded")||[];
     const avg=f=>{const v=src.map(r=>r[f]??0);return v.length?v.reduce((a,b)=>a+b,0)/v.length:0;};
     return{net_vol:avg("net_vol"),std_pct:avg("std_pct"),otd_pct:avg("otd_pct"),
       avg_deal:avg("avg_deal"),net_issue_rate:avg("net_issue_rate"),fallout_rate:avg("fallout_rate")};
-  },[cur]);
+  },[curForTable]);
 
   const upload=useCallback(async e=>{
     const file=e.target.files[0];if(!file)return;
@@ -2662,31 +2279,22 @@ function App(){
       setMsg("Saving to Firebase...");
       await db.set(uploadWin,out);
       uploadWin==="r30"?setR30(out):setYtd(out);
-
-      // Save to history (R30 only — builds the time series)
       if(uploadWin==="r30"){
         const h=await db.get("history")||[];
         const hist=Array.isArray(h)?h:[];
-        // Avoid duplicate — check by date range
         const existing=hist.findIndex(x=>x.sdate===out.sdate&&x.edate===out.edate);
         const snapshot={
-          win:uploadWin,sdate:out.sdate,edate:out.edate,
-          updated:out.updated,date_range:out.date_range,
-          reps:out.reps.map(r=>({
-            rep:r.rep,tier:r.tier,rank:r.rank,score:r.score,
+          win:uploadWin,sdate:out.sdate,edate:out.edate,updated:out.updated,date_range:out.date_range,
+          reps:out.reps.map(r=>({rep:r.rep,tier:r.tier,rank:r.rank,score:r.score,
             std_pct:r.std_pct,otd_pct:r.otd_pct,net_vol:r.net_vol,
-            avg_deal:r.avg_deal,net_issue_rate:r.net_issue_rate,
-            fallout_rate:r.fallout_rate,demo:r.demo,
-          }))
+            avg_deal:r.avg_deal,net_issue_rate:r.net_issue_rate,fallout_rate:r.fallout_rate,demo:r.demo}))
         };
-        if(existing>=0)hist[existing]=snapshot;
-        else hist.push(snapshot);
-        // Keep last 52 snapshots
+        if(existing>=0)hist[existing]=snapshot;else hist.push(snapshot);
         const trimmed=hist.slice(-52);
         await db.set("history",trimmed);
         setHistory(trimmed);
       }
-      setTab(uploadWin);setModal(false);setMsg("");
+      setSalesSub(uploadWin);setMainTab("sales");setModal(false);setMsg("");
     }catch(err){setMsg("Error: "+err.message);}
     finally{setUploading(false);if(fileRef.current)fileRef.current.value="";}
   },[uploadWin]);
@@ -2698,22 +2306,12 @@ function App(){
     </th>
   );
 
-  const active=cur?.reps?.filter(r=>r.tier!=="⛔ Excluded").length??0;
+  const active=curForTable?.reps?.filter(r=>r.tier!=="⛔ Excluded").length??0;
 
-  const rows=useMemo(()=>{
-    if(tab==="watch"){
-      return(r30?.reps||[]).map(rr=>{
-        const ytdR=ytd?.reps?.find(x=>x.rep===rr.rep);
-        return{...rr,_gap:gapPts(rr),_ytdGap:ytdR?gapPts(ytdR):null};
-      }).filter(r=>(r._gap??0)>=6||(r._ytdGap??0)>=6)
-        .sort((a,b)=>Math.max(b._gap??0,b._ytdGap??0)-Math.max(a._gap??0,a._ytdGap??0));
-    }
-    if(tab==="deep"){
-      return(cur?.reps||[]).filter(r=>r.tier!=="⛔ Excluded").sort((a,b)=>b.net_vol-a.net_vol);
-    }
-    if(tab==="trends"||tab==="r30"&&!cur||tab==="ytd"&&!cur)return[];
-    if(!cur?.reps)return[];
-    let list=[...cur.reps];
+  const tableRows=useMemo(()=>{
+    const src=salesSub==="ytd"?ytd:r30;
+    if(!src?.reps)return[];
+    let list=[...src.reps];
     if(search)list=list.filter(r=>r.rep?.toLowerCase().includes(search.toLowerCase()));
     if(marketFilter==="__unassigned__") list=list.filter(r=>!markets[r.rep]||markets[r.rep]==="");
     else if(marketFilter) list=list.filter(r=>markets[r.rep]===marketFilter);
@@ -2725,41 +2323,33 @@ function App(){
       return sort.d==="asc"?(av??0)-(bv??0):(bv??0)-(av??0);
     });
     return list;
-  },[tab,cur,r30,ytd,search,sort]);
+  },[salesSub,r30,ytd,search,sort,marketFilter,markets]);
 
-  const navItems=[
-    {k:"r30",label:"ROLLING 30"},
-    {k:"ytd",label:"YEAR TO DATE"},
-    {k:"trends",label:"📈 TRENDS"},
-    {k:"watch",label:"⚠ WATCH LIST"},
-    {k:"deep",label:"DEEP STATS"},
-    {k:"markets",label:"🗺 MARKETS"},
-    {k:"compare",label:"⚖ COMPARE"},
-    {k:"repmap",label:"📍 REP MAP"},
-    {k:"tracker",label:"🗂 TRACKER"},
-  ];
-  const navColor=k=>k==="watch"?"#f97316":k==="deep"?"#a78bfa":k==="trends"?"#4ade80":k==="markets"?"#f59e0b":k==="compare"?"#a78bfa":k==="repmap"?"#34d399":k==="tracker"?"#fb923c":"#38bdf8";
+  const deepRows=useMemo(()=>{
+    const src=salesSub==="ytd"?ytd:r30;
+    return(src?.reps||[]).filter(r=>r.tier!=="⛔ Excluded").sort((a,b)=>b.net_vol-a.net_vol);
+  },[salesSub,r30,ytd]);
+
+  const allRepsForDispatch=useMemo(()=>(r30?.reps||ytd?.reps||[]),[r30,ytd]);
 
   return(
     <div style={{minHeight:"100vh",background:"#080c14",color:"#e2e8f0",fontSize:14}}>
 
-      {/* NAV */}
+      {/* MAIN NAV */}
       <div style={{background:"#0d1120",borderBottom:"1px solid #1e2a3a",padding:"0 20px",
         display:"flex",alignItems:"center",height:52,position:"sticky",top:0,zIndex:50}}>
-        <div style={{fontWeight:800,fontSize:15,color:"#fff",marginRight:20,whiteSpace:"nowrap"}}>📊 Sales Rank</div>
-        {navItems.map(({k,label})=>(
-          <button key={k} onClick={()=>setTab(k)} style={{
-            background:"none",border:"none",padding:"0 11px",height:52,fontFamily:"inherit",
-            color:tab===k?navColor(k):"#64748b",
-            borderBottom:tab===k?`2px solid ${navColor(k)}`:"2px solid transparent",
-            cursor:"pointer",fontWeight:tab===k?700:400,fontSize:12,letterSpacing:".04em",whiteSpace:"nowrap"
+        <div style={{fontWeight:800,fontSize:15,color:"#fff",marginRight:24,whiteSpace:"nowrap"}}>📊 Sales Rank</div>
+        {[["sales","📈 Sales Data"],["dispatch","🗂 Dispatch Tools"]].map(([k,label])=>(
+          <button key={k} onClick={()=>setMainTab(k)} style={{
+            background:"none",border:"none",padding:"0 16px",height:52,fontFamily:"inherit",
+            color:mainTab===k?"#38bdf8":"#64748b",
+            borderBottom:mainTab===k?"2px solid #38bdf8":"2px solid transparent",
+            cursor:"pointer",fontWeight:mainTab===k?700:400,fontSize:13,letterSpacing:".03em",whiteSpace:"nowrap"
           }}>{label}</button>
         ))}
         <div style={{flex:1}}/>
-        {history.length>0&&(
-          <span style={{fontSize:10,color:"#1e3a5f",marginRight:12}}>{history.length} snapshots</span>
-        )}
-        {cur&&<span style={{fontSize:11,color:"#1e3a5f",marginRight:12}}>Updated {new Date(cur.updated).toLocaleDateString()}</span>}
+        {history.length>0&&<span style={{fontSize:10,color:"#1e3a5f",marginRight:12}}>{history.length} snapshots</span>}
+        {curForTable&&<span style={{fontSize:11,color:"#1e3a5f",marginRight:12}}>Updated {new Date(curForTable.updated).toLocaleDateString()}</span>}
         <button onClick={()=>{setModal(true);setMsg("");}} style={{
           background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:6,
           padding:"7px 14px",color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"
@@ -2781,8 +2371,7 @@ function App(){
                   flex:1,padding:"9px 0",borderRadius:7,fontFamily:"inherit",
                   border:`1.5px solid ${uploadWin===w?"#38bdf8":"#1e2a3a"}`,
                   background:uploadWin===w?"rgba(56,189,248,.08)":"transparent",
-                  color:uploadWin===w?"#38bdf8":"#64748b",
-                  cursor:uploading?"not-allowed":"pointer",fontSize:12,fontWeight:600
+                  color:uploadWin===w?"#38bdf8":"#64748b",cursor:uploading?"not-allowed":"pointer",fontSize:12,fontWeight:600
                 }}>{w==="r30"?"Rolling 30 Days":"Year to Date"}</button>
               ))}
             </div>
@@ -2793,15 +2382,11 @@ function App(){
               <>
                 <div onClick={()=>fileRef.current?.click()} style={{
                   border:"1.5px dashed #1e2a3a",borderRadius:8,padding:"22px",
-                  textAlign:"center",cursor:"pointer",color:"#64748b",fontSize:13,marginBottom:10
-                }}>
+                  textAlign:"center",cursor:"pointer",color:"#64748b",fontSize:13,marginBottom:10}}>
                   <div style={{fontSize:26,marginBottom:6}}>📄</div>Click to select Sales Efficiency CSV
                 </div>
                 <input ref={fileRef} type="file" accept=".csv" onChange={upload} style={{display:"none"}}/>
-                <button onClick={()=>setModal(false)} style={{
-                  width:"100%",padding:9,background:"none",border:"1px solid #1e2a3a",
-                  borderRadius:6,color:"#64748b",cursor:"pointer",fontFamily:"inherit",fontSize:12
-                }}>Cancel</button>
+                <button onClick={()=>setModal(false)} style={{width:"100%",padding:9,background:"none",border:"1px solid #1e2a3a",borderRadius:6,color:"#64748b",cursor:"pointer",fontFamily:"inherit",fontSize:12}}>Cancel</button>
               </>
             ):(
               <div style={{textAlign:"center",padding:"24px 0"}}>
@@ -2819,268 +2404,212 @@ function App(){
           onClose={()=>setScorecard(null)} teamAvgs={teamAvgs} markets={markets}/>
       )}
 
-      {/* TRENDS TAB */}
-      {tab==="trends"&&(
-        <TrendsTab r30Data={r30} ytdData={ytd} history={history} onOpenScorecard={setScorecard}/>
-      )}
+      {/* ══ SALES DATA TAB ══ */}
+      {mainTab==="sales"&&(
+        <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 52px)"}}>
+          <SubNavBar
+            items={[["r30","Rolling 30"],["ytd","Year to Date"],["trends","📈 Trends"],["deep","Deep Stats"]]}
+            active={salesSub}
+            onChange={setSalesSub}
+          />
+          <div style={{flex:1,overflowY:"auto"}}>
 
-      {/* NO DATA */}
-      {(tab==="r30"||tab==="ytd")&&!cur&&(
-        <div style={{display:"flex",flexDirection:"column",alignItems:"center",
-          justifyContent:"center",height:"60vh",gap:14,color:"#334155"}}>
-          <div style={{fontSize:44}}>📭</div>
-          <div style={{fontSize:15,fontWeight:600,color:"#475569"}}>No {tab==="r30"?"Rolling 30":"YTD"} data yet</div>
-          <button onClick={()=>{setUploadWin(tab);setModal(true);}} style={{
-            marginTop:8,background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",
-            borderRadius:7,padding:"10px 22px",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"
-          }}>Upload CSV</button>
-        </div>
-      )}
-
-      {/* MAIN TABLE */}
-      {(tab==="r30"||tab==="ytd")&&cur&&(
-        <div style={{padding:"16px 20px"}}>
-          <div style={{marginBottom:14}}>
-            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:7}}>
-              <span style={{fontSize:11,color:"#334155"}}>{cur.date_range}</span>
-              {marketFilter&&marketFilter!=="__unassigned__"&&(
-                <span style={{fontSize:11,color:"#f59e0b",background:"rgba(245,158,11,.1)",
-                  padding:"2px 8px",borderRadius:4,fontWeight:600}}>
-                  🗺 {marketFilter}
-                </span>
-              )}
-            </div>
-            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              {[["Active Reps",active],["Avg STD%",fP(teamAvgs.std_pct)],["Avg OTD%",fP(teamAvgs.otd_pct)],
-                ["Avg Net Vol",f$(teamAvgs.net_vol)],["Avg Deal",f$(teamAvgs.avg_deal)],
-                ["Avg Fallout",fP(teamAvgs.fallout_rate)],["Avg NetStk%",fP(teamAvgs.net_issue_rate)]
-              ].map(([l,v])=>(
-                <div key={l} style={{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:8,padding:"8px 13px",minWidth:95}}>
-                  <div style={{fontSize:10,color:"#334155",marginBottom:2}}>{l}</div>
-                  <div style={{fontWeight:700,fontSize:15,color:"#e2e8f0"}}>{v}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div style={{display:"flex",gap:8,marginBottom:11,flexWrap:"wrap",alignItems:"center"}}>
-            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search rep..."
-              style={{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:6,
-                padding:"7px 12px",color:"#e2e8f0",fontSize:13,fontFamily:"inherit",
-                outline:"none",width:200}}/>
-            <select value={marketFilter} onChange={e=>setMarketFilter(e.target.value)}
-              style={{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:6,
-                padding:"7px 12px",color:marketFilter?"#f59e0b":"#64748b",fontSize:13,
-                fontFamily:"inherit",cursor:"pointer",outline:"none",minWidth:160}}>
-              <option value="">🗺 All Markets</option>
-              {marketList.map(m=>(
-                <option key={m} value={m}>{m}</option>
-              ))}
-              <option value="__unassigned__">— Unassigned</option>
-            </select>
-            {marketFilter&&(
-              <button onClick={()=>setMarketFilter("")}
-                style={{background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.3)",
-                  borderRadius:6,padding:"7px 10px",color:"#f59e0b",cursor:"pointer",
-                  fontSize:12,fontFamily:"inherit"}}>
-                ✕ Clear
-              </button>
-            )}
-            {marketFilter&&(
-              <span style={{fontSize:12,color:"#64748b"}}>
-                {rows.filter(r=>r.tier!=="⛔ Excluded").length} reps in {marketFilter}
-              </span>
-            )}
-          </div>
-          <div style={{overflowX:"auto",borderRadius:10,border:"1px solid #1e2a3a"}}>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-              <thead>
-                <tr style={{background:"#0d1120"}}>
-                  <TH f="rank" label="Rank"/>
-                  <TH f="tier" label="Tier"/>
-                  <TH f="rep" label="Rep"/>
-                  <TH f="score" label="Score"/>
-                  <TH f="demo" label="Demos"/>
-                  <TH f="std_pct" label="STD%" title="Close rate from demos sat"/>
-                  <TH f="otd_pct" label="OTD%" title="On-the-day close rate"/>
-                  <TH f="_gap" label="Gap" c="#f97316" title="OTD vs STD gap"/>
-                  <TH f="net_vol" label="Net Vol"/>
-                  <TH f="avg_deal" label="Avg Deal"/>
-                  <TH f="net_issue_rate" label="NetStk%" title="NetStk% — Stick Rate: closes that net issued"/>
-                  <TH f="fallout_rate" label="Fallout%" title="Weighted: Cancel 65% · Hold 25% · CrDecl 10%"/>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r,i)=>{
-                  const tc2=TC[r.tier]??"#64748b";
-                  const excl=r.tier==="⛔ Excluded";
-                  const pts=gapPts(r),gi=gapInfo(pts);
-                  return(
-                    <tr key={r.rep} onClick={()=>!excl&&setScorecard(r.rep)}
-                      style={{background:i%2===0?"#080c14":"#0a0f1a",cursor:excl?"default":"pointer",opacity:excl?.45:1}}>
-                      <td style={tdS}>{r.rank}</td>
-                      <td style={tdS}><span style={{color:tc2,fontSize:11,fontWeight:600}}>{r.tier}</span></td>
-                      <td style={{...tdS,fontWeight:600,color:"#f1f5f9",whiteSpace:"nowrap"}}>
-                        {r.rep}{!excl&&<span style={{marginLeft:5,fontSize:10,color:"#1e3a5f"}}>↗</span>}
-                        {markets[r.rep]&&<span style={{marginLeft:6,fontSize:9,color:"#f59e0b",
-                          background:"rgba(245,158,11,.1)",padding:"1px 5px",borderRadius:3}}>
-                          {markets[r.rep]}
-                        </span>}
-                      </td>
-                      <td style={{...tdS,color:"#38bdf8",fontWeight:700}}>{excl?"—":r.score.toFixed(4)}</td>
-                      <td style={tdS}>{fN(r.demo)}</td>
-                      <td style={{...tdS,color:r.std_pct>teamAvgs.std_pct?"#4ade80":"#f87171"}}>{fP(r.std_pct)}</td>
-                      <td style={{...tdS,color:r.otd_pct>teamAvgs.otd_pct?"#4ade80":"#f87171"}}>{fP(r.otd_pct)}</td>
-                      <td style={{...tdS,fontWeight:pts>=6?700:400}}>
-                        <span style={{color:gi.color}}>{gi.label}</span>
-                        {pts>=6&&<span style={{marginLeft:4,fontSize:11}}>{gi.badge}</span>}
-                      </td>
-                      <td style={{...tdS,color:r.net_vol>teamAvgs.net_vol?"#4ade80":"#f87171"}}>{f$(r.net_vol)}</td>
-                      <td style={{...tdS,color:r.avg_deal>teamAvgs.avg_deal?"#4ade80":"#f87171"}}>{f$(r.avg_deal)}</td>
-                      <td style={{...tdS,color:r.net_issue_rate>teamAvgs.net_issue_rate?"#4ade80":"#f87171"}}>{fP(r.net_issue_rate)}</td>
-                      <td style={{...tdS,color:r.fallout_rate<teamAvgs.fallout_rate?"#4ade80":"#f87171"}}>{fP(r.fallout_rate)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* WATCH LIST */}
-      {tab==="watch"&&(
-        <div style={{padding:"16px 20px"}}>
-          <div style={{marginBottom:14}}>
-            <div style={{fontWeight:700,fontSize:14,color:"#f97316",marginBottom:4}}>⚠ OTD vs STD Watch List</div>
-            <div style={{fontSize:12,color:"#64748b",lineHeight:1.6,maxWidth:680}}>
-              Large OTD↔STD gap = rep may be aborting appointments at the door.
-              {" "}<span style={{color:"#ef4444"}}>🚨 ≥20pp</span> · <span style={{color:"#f97316"}}>⚠ 12–19pp</span> · <span style={{color:"#facc15"}}>👀 6–11pp</span>
-            </div>
-          </div>
-          {!r30&&!ytd?<div style={{color:"#334155"}}>Upload data first.</div>:(
-            <div style={{overflowX:"auto",borderRadius:10,border:"1px solid #1e2a3a"}}>
-              <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-                <thead>
-                  <tr style={{background:"#0d1120"}}>
-                    {["Rep","Tier","R30 OTD%","R30 STD%","R30 Gap","YTD OTD%","YTD STD%","YTD Gap","Score","Demos"].map(l=>(
-                      <th key={l} style={thS}>{l}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r,i)=>{
-                    const ytdR=ytd?.reps?.find(x=>x.rep===r.rep);
-                    const r30R=r30?.reps?.find(x=>x.rep===r.rep);
-                    const rGap=r30R?gapPts(r30R):null,yGap=ytdR?gapPts(ytdR):null;
-                    return(
-                      <tr key={r.rep} onClick={()=>setScorecard(r.rep)}
-                        style={{background:i%2===0?"#080c14":"#0a0f1a",cursor:"pointer"}}>
-                        <td style={{...tdS,fontWeight:600,color:"#f1f5f9",whiteSpace:"nowrap"}}>{r.rep}</td>
-                        <td style={tdS}><span style={{color:TC[r30R?.tier||r.tier]??"#64748b",fontSize:11,fontWeight:600}}>{r30R?.tier||r.tier}</span></td>
-                        <td style={tdS}>{r30R?fP(r30R.otd_pct):"—"}</td>
-                        <td style={tdS}>{r30R?fP(r30R.std_pct):"—"}</td>
-                        <td style={tdS}>{rGap!=null?<span style={{color:gapInfo(rGap).color,fontWeight:700}}>{gapInfo(rGap).label} {gapInfo(rGap).badge}</span>:"—"}</td>
-                        <td style={tdS}>{ytdR?fP(ytdR.otd_pct):"—"}</td>
-                        <td style={tdS}>{ytdR?fP(ytdR.std_pct):"—"}</td>
-                        <td style={tdS}>{yGap!=null?<span style={{color:gapInfo(yGap).color,fontWeight:700}}>{gapInfo(yGap).label} {gapInfo(yGap).badge}</span>:"—"}</td>
-                        <td style={{...tdS,color:"#38bdf8",fontWeight:700}}>{r30R?.score?.toFixed(4)??"—"}</td>
-                        <td style={tdS}>{r30R?.demo??"—"}</td>
-                      </tr>
-                    );
-                  })}
-                  {rows.length===0&&<tr><td colSpan={10} style={{...tdS,textAlign:"center",color:"#334155",padding:32}}>No flagged reps ✓</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* COMPARE */}
-      {tab==="compare"&&(
-        <ComparisonTool r30Data={r30} ytdData={ytd} markets={markets} marketList={marketList}/>
-      )}
-
-      {/* MARKETS */}
-      {tab==="markets"&&(
-        <MarketManager
-          r30Data={r30} ytdData={ytd}
-          markets={markets} marketList={marketList}
-          onSave={(a,l)=>{setMarkets(a);setMarketList(l);}}
-        />
-      )}
-
-      {/* REP MAP */}
-      {tab==="repmap"&&(
-        <RepMapTab allReps={(r30?.reps||ytd?.reps||[])} markets={markets}/>
-      )}
-
-      {/* TRACKER */}
-      {tab==="tracker"&&(
-        <TrackerTab allReps={(r30?.reps||ytd?.reps||[])} markets={markets}/>
-      )}
-
-      {/* DEEP STATS */}
-      {tab==="deep"&&(
-        <div style={{padding:"16px 20px"}}>
-          <div style={{marginBottom:12}}>
-            <div style={{fontWeight:700,fontSize:14,color:"#a78bfa",marginBottom:4}}>📊 Deep Stats</div>
-            <div style={{fontSize:12,color:"#64748b"}}>NSLI/NCP · Close type breakdown · Fallout detail · Sorted by Net Vol</div>
-          </div>
-          {!cur?<div style={{color:"#334155"}}>Upload data first.</div>:(
-            <div style={{overflowX:"auto",borderRadius:10,border:"1px solid #1e2a3a"}}>
-              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                <thead>
-                  <tr style={{background:"#0d1120"}}>
-                    <th style={thS}>Rep</th><th style={thS}>Tier</th>
-                    <th style={thS}>Net Vol</th><th style={thS}>NSLI/NCP</th><th style={thS}>NSLI%</th>
-                    <th style={{...thS,color:"#38bdf8"}}>JSC1-Net</th>
-                    <th style={{...thS,color:"#6366f1"}}>JSC2</th>
-                    <th style={{...thS,color:"#f59e0b"}}>JSC3</th>
-                    <th style={{...thS,color:"#f97316"}}>JSC4</th>
-                    <th style={{...thS,color:"#ef4444"}}>JSC5</th>
-                    <th style={{...thS,color:"#94a3b8"}}>JSC6</th>
-                    <th style={{...thS,borderLeft:"1px solid #1e2a3a",color:"#ef4444"}}>Cancel Cnt</th>
-                    <th style={{...thS,color:"#ef4444"}}>Cancel Vol</th>
-                    <th style={{...thS,color:"#facc15"}}>Hold Cnt</th>
-                    <th style={{...thS,color:"#facc15"}}>Hold Vol</th>
-                    <th style={{...thS,color:"#a78bfa"}}>CrDecl Cnt</th>
-                    <th style={{...thS,color:"#a78bfa"}}>CrDecl Vol</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r,i)=>{
-                    const nsliPct=r.net_vol>0?r.nsli/r.net_vol:0;
-                    const emptyJsc={cnt:0,vol:0};
-                    const jsc=r.jsc||[emptyJsc,emptyJsc,emptyJsc,emptyJsc,emptyJsc,emptyJsc];
-                    return(
-                      <tr key={r.rep} onClick={()=>setScorecard(r.rep)}
-                        style={{background:i%2===0?"#080c14":"#0a0f1a",cursor:"pointer"}}>
-                        <td style={{...tdS,fontWeight:600,color:"#f1f5f9",whiteSpace:"nowrap"}}>{r.rep}</td>
-                        <td style={tdS}><span style={{color:TC[r.tier]??"#64748b",fontSize:10,fontWeight:600}}>{r.tier}</span></td>
-                        <td style={{...tdS,color:"#4ade80",fontWeight:700}}>{f$(r.net_vol)}</td>
-                        <td style={tdS}>{f$(r.nsli)}</td>
-                        <td style={{...tdS,color:nsliPct>.1?"#f59e0b":"#64748b"}}>{fP(nsliPct)}</td>
-                        {jsc.map((j,idx)=>(
-                          <td key={idx} style={tdS}>
-                            {j.cnt>0?<span>{j.cnt}<span style={{fontSize:10,color:"#334155"}}> {f$(j.vol)}</span></span>:"—"}
-                          </td>
+            {/* R30 / YTD TABLE */}
+            {(salesSub==="r30"||salesSub==="ytd")&&(
+              <div style={{padding:"16px 20px"}}>
+                {!(salesSub==="r30"?r30:ytd)?(
+                  <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"50vh",gap:14,color:"#334155"}}>
+                    <div style={{fontSize:44}}>📭</div>
+                    <div style={{fontSize:15,fontWeight:600,color:"#475569"}}>No {salesSub==="r30"?"Rolling 30":"YTD"} data yet</div>
+                    <button onClick={()=>{setUploadWin(salesSub);setModal(true);}} style={{
+                      marginTop:8,background:"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",
+                      borderRadius:7,padding:"10px 22px",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"
+                    }}>Upload CSV</button>
+                  </div>
+                ):(
+                  <>
+                    <div style={{marginBottom:14}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:7}}>
+                        <span style={{fontSize:11,color:"#334155"}}>{(salesSub==="ytd"?ytd:r30)?.date_range}</span>
+                        {marketFilter&&marketFilter!=="__unassigned__"&&(
+                          <span style={{fontSize:11,color:"#f59e0b",background:"rgba(245,158,11,.1)",padding:"2px 8px",borderRadius:4,fontWeight:600}}>🗺 {marketFilter}</span>
+                        )}
+                      </div>
+                      <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                        {[["Active Reps",active],["Avg STD%",fP(teamAvgs.std_pct)],["Avg OTD%",fP(teamAvgs.otd_pct)],
+                          ["Avg Net Vol",f$(teamAvgs.net_vol)],["Avg Deal",f$(teamAvgs.avg_deal)],
+                          ["Avg Fallout",fP(teamAvgs.fallout_rate)],["Avg NetStk%",fP(teamAvgs.net_issue_rate)]
+                        ].map(([l,v])=>(
+                          <div key={l} style={{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:8,padding:"8px 13px",minWidth:95}}>
+                            <div style={{fontSize:10,color:"#334155",marginBottom:2}}>{l}</div>
+                            <div style={{fontWeight:700,fontSize:15,color:"#e2e8f0"}}>{v}</div>
+                          </div>
                         ))}
-                        <td style={{...tdS,borderLeft:"1px solid #1e2a3a",color:r.cancel_cnt>0?"#ef4444":"#334155"}}>{fN(r.cancel_cnt)}</td>
-                        <td style={tdS}>{r.cancel_vol>0?f$(r.cancel_vol):"—"}</td>
-                        <td style={{...tdS,color:r.hold_cnt>0?"#facc15":"#334155"}}>{fN(r.hold_cnt)}</td>
-                        <td style={tdS}>{r.hold_vol>0?f$(r.hold_vol):"—"}</td>
-                        <td style={{...tdS,color:r.crdecline_cnt>0?"#a78bfa":"#334155"}}>{fN(r.crdecline_cnt)}</td>
-                        <td style={tdS}>{r.crdecline_vol>0?f$(r.crdecline_vol):"—"}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                      </div>
+                    </div>
+                    <div style={{display:"flex",gap:8,marginBottom:11,flexWrap:"wrap",alignItems:"center"}}>
+                      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search rep..."
+                        style={{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:6,
+                          padding:"7px 12px",color:"#e2e8f0",fontSize:13,fontFamily:"inherit",outline:"none",width:200}}/>
+                      <select value={marketFilter} onChange={e=>setMarketFilter(e.target.value)}
+                        style={{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:6,
+                          padding:"7px 12px",color:marketFilter?"#f59e0b":"#64748b",fontSize:13,
+                          fontFamily:"inherit",cursor:"pointer",outline:"none",minWidth:160}}>
+                        <option value="">🗺 All Markets</option>
+                        {marketList.map(m=><option key={m} value={m}>{m}</option>)}
+                        <option value="__unassigned__">— Unassigned</option>
+                      </select>
+                      {marketFilter&&(
+                        <button onClick={()=>setMarketFilter("")}
+                          style={{background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.3)",
+                            borderRadius:6,padding:"7px 10px",color:"#f59e0b",cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>
+                          ✕ Clear
+                        </button>
+                      )}
+                    </div>
+                    <div style={{overflowX:"auto",borderRadius:10,border:"1px solid #1e2a3a"}}>
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                        <thead>
+                          <tr style={{background:"#0d1120"}}>
+                            <TH f="rank" label="Rank"/>
+                            <TH f="tier" label="Tier"/>
+                            <TH f="rep" label="Rep"/>
+                            <TH f="score" label="Score"/>
+                            <TH f="demo" label="Demos"/>
+                            <TH f="std_pct" label="STD%" title="Close rate from demos sat"/>
+                            <TH f="otd_pct" label="OTD%" title="On-the-day close rate"/>
+                            <TH f="_gap" label="Gap" c="#f97316" title="OTD vs STD gap"/>
+                            <TH f="net_vol" label="Net Vol"/>
+                            <TH f="avg_deal" label="Avg Deal"/>
+                            <TH f="net_issue_rate" label="NetStk%" title="Stick Rate"/>
+                            <TH f="fallout_rate" label="Fallout%" title="Weighted: Cancel 65% · Hold 25% · CrDecl 10%"/>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tableRows.map((r,i)=>{
+                            const tc2=TC[r.tier]??"#64748b";
+                            const excl=r.tier==="⛔ Excluded";
+                            const pts=gapPts(r),gi=gapInfo(pts);
+                            return(
+                              <tr key={r.rep} onClick={()=>!excl&&setScorecard(r.rep)}
+                                style={{background:i%2===0?"#080c14":"#0a0f1a",cursor:excl?"default":"pointer",opacity:excl?.45:1}}>
+                                <td style={tdS}>{r.rank}</td>
+                                <td style={tdS}><span style={{color:tc2,fontSize:11,fontWeight:600}}>{r.tier}</span></td>
+                                <td style={{...tdS,fontWeight:600,color:"#f1f5f9",whiteSpace:"nowrap"}}>
+                                  {r.rep}{!excl&&<span style={{marginLeft:5,fontSize:10,color:"#1e3a5f"}}>↗</span>}
+                                  {markets[r.rep]&&<span style={{marginLeft:6,fontSize:9,color:"#f59e0b",background:"rgba(245,158,11,.1)",padding:"1px 5px",borderRadius:3}}>{markets[r.rep]}</span>}
+                                </td>
+                                <td style={{...tdS,color:"#38bdf8",fontWeight:700}}>{excl?"—":r.score.toFixed(4)}</td>
+                                <td style={tdS}>{fN(r.demo)}</td>
+                                <td style={{...tdS,color:r.std_pct>teamAvgs.std_pct?"#4ade80":"#f87171"}}>{fP(r.std_pct)}</td>
+                                <td style={{...tdS,color:r.otd_pct>teamAvgs.otd_pct?"#4ade80":"#f87171"}}>{fP(r.otd_pct)}</td>
+                                <td style={{...tdS,fontWeight:pts>=6?700:400}}>
+                                  <span style={{color:gi.color}}>{gi.label}</span>
+                                  {pts>=6&&<span style={{marginLeft:4,fontSize:11}}>{gi.badge}</span>}
+                                </td>
+                                <td style={{...tdS,color:r.net_vol>teamAvgs.net_vol?"#4ade80":"#f87171"}}>{f$(r.net_vol)}</td>
+                                <td style={{...tdS,color:r.avg_deal>teamAvgs.avg_deal?"#4ade80":"#f87171"}}>{f$(r.avg_deal)}</td>
+                                <td style={{...tdS,color:r.net_issue_rate>teamAvgs.net_issue_rate?"#4ade80":"#f87171"}}>{fP(r.net_issue_rate)}</td>
+                                <td style={{...tdS,color:r.fallout_rate<teamAvgs.fallout_rate?"#4ade80":"#f87171"}}>{fP(r.fallout_rate)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* TRENDS */}
+            {salesSub==="trends"&&(
+              <TrendsTab r30Data={r30} ytdData={ytd} history={history} onOpenScorecard={setScorecard}/>
+            )}
+
+            {/* DEEP STATS */}
+            {salesSub==="deep"&&(
+              <div style={{padding:"16px 20px"}}>
+                <div style={{marginBottom:12}}>
+                  <div style={{fontWeight:700,fontSize:14,color:"#a78bfa",marginBottom:4}}>📊 Deep Stats</div>
+                  <div style={{fontSize:12,color:"#64748b"}}>NSLI/NCP · Close type breakdown · Fallout detail · Sorted by Net Vol</div>
+                </div>
+                {!r30&&!ytd?<div style={{color:"#334155"}}>Upload data first.</div>:(
+                  <div style={{overflowX:"auto",borderRadius:10,border:"1px solid #1e2a3a"}}>
+                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                      <thead>
+                        <tr style={{background:"#0d1120"}}>
+                          <th style={thS}>Rep</th><th style={thS}>Tier</th>
+                          <th style={thS}>Net Vol</th><th style={thS}>NSLI/NCP</th><th style={thS}>NSLI%</th>
+                          <th style={{...thS,color:"#38bdf8"}}>JSC1-Net</th>
+                          <th style={{...thS,color:"#6366f1"}}>JSC2</th>
+                          <th style={{...thS,color:"#f59e0b"}}>JSC3</th>
+                          <th style={{...thS,color:"#f97316"}}>JSC4</th>
+                          <th style={{...thS,color:"#ef4444"}}>JSC5</th>
+                          <th style={{...thS,color:"#94a3b8"}}>JSC6</th>
+                          <th style={{...thS,borderLeft:"1px solid #1e2a3a",color:"#ef4444"}}>Cancel Cnt</th>
+                          <th style={{...thS,color:"#ef4444"}}>Cancel Vol</th>
+                          <th style={{...thS,color:"#facc15"}}>Hold Cnt</th>
+                          <th style={{...thS,color:"#facc15"}}>Hold Vol</th>
+                          <th style={{...thS,color:"#a78bfa"}}>CrDecl Cnt</th>
+                          <th style={{...thS,color:"#a78bfa"}}>CrDecl Vol</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {deepRows.map((r,i)=>{
+                          const nsliPct=r.net_vol>0?r.nsli/r.net_vol:0;
+                          const emptyJsc={cnt:0,vol:0};
+                          const jsc=r.jsc||[emptyJsc,emptyJsc,emptyJsc,emptyJsc,emptyJsc,emptyJsc];
+                          return(
+                            <tr key={r.rep} onClick={()=>setScorecard(r.rep)}
+                              style={{background:i%2===0?"#080c14":"#0a0f1a",cursor:"pointer"}}>
+                              <td style={{...tdS,fontWeight:600,color:"#f1f5f9",whiteSpace:"nowrap"}}>{r.rep}</td>
+                              <td style={tdS}><span style={{color:TC[r.tier]??"#64748b",fontSize:10,fontWeight:600}}>{r.tier}</span></td>
+                              <td style={{...tdS,color:"#4ade80",fontWeight:700}}>{f$(r.net_vol)}</td>
+                              <td style={tdS}>{f$(r.nsli)}</td>
+                              <td style={{...tdS,color:nsliPct>.1?"#f59e0b":"#64748b"}}>{fP(nsliPct)}</td>
+                              {jsc.map((j,idx)=>(
+                                <td key={idx} style={tdS}>
+                                  {j.cnt>0?<span>{j.cnt}<span style={{fontSize:10,color:"#334155"}}> {f$(j.vol)}</span></span>:"—"}
+                                </td>
+                              ))}
+                              <td style={{...tdS,borderLeft:"1px solid #1e2a3a",color:r.cancel_cnt>0?"#ef4444":"#334155"}}>{fN(r.cancel_cnt)}</td>
+                              <td style={tdS}>{r.cancel_vol>0?f$(r.cancel_vol):"—"}</td>
+                              <td style={{...tdS,color:r.hold_cnt>0?"#facc15":"#334155"}}>{fN(r.hold_cnt)}</td>
+                              <td style={tdS}>{r.hold_vol>0?f$(r.hold_vol):"—"}</td>
+                              <td style={{...tdS,color:r.crdecline_cnt>0?"#a78bfa":"#334155"}}>{fN(r.crdecline_cnt)}</td>
+                              <td style={tdS}>{r.crdecline_vol>0?f$(r.crdecline_vol):"—"}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+          </div>
         </div>
       )}
+
+      {/* ══ DISPATCH TOOLS TAB ══ */}
+      {mainTab==="dispatch"&&(
+        <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 52px)"}}>
+          <SubNavBar
+            items={[["tracker","🗂 Tracker"],["compare","⚖ Compare"],["markets","🗺 Markets"],["repmap","📍 Rep Map"]]}
+            active={dispatchSub}
+            onChange={setDispatchSub}
+          />
+          <div style={{flex:1,overflowY:dispatchSub==="repmap"||dispatchSub==="tracker"?"hidden":"auto"}}>
+            {dispatchSub==="tracker"&&<TrackerTab allReps={allRepsForDispatch} markets={markets}/>}
+            {dispatchSub==="compare"&&<ComparisonTool r30Data={r30} ytdData={ytd} markets={markets} marketList={marketList}/>}
+            {dispatchSub==="markets"&&<MarketManager r30Data={r30} ytdData={ytd} markets={markets} marketList={marketList} onSave={(a,l)=>{setMarkets(a);setMarketList(l);}}/>}
+            {dispatchSub==="repmap"&&<RepMapTab allReps={allRepsForDispatch} markets={markets}/>}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
