@@ -2011,79 +2011,164 @@ function fmtElapsed(ms){
 
 function ConfirmingForm({onSubmit,showSetter}){
   const [form,setForm]=useState({
-    setter:"",apptDate:"Today",apptTime:"9AM",phone:"",address:"",
-    homeType:"SFH",residenceType:"Primary Residence",windows:"",doors:"",
+    customerName:"",promoter:"",apptDate:"Today",apptTime:"9AM",phone:"",address:"",
+    homeType:"SFH",residenceType:"PR",windows:"",doors:"",
     sliders:"",originalWindows:"Yes",mainStructure:"Yes",noResize:"Yes",
     maritalStatus:"Single",gateCode:"",notes:""
   });
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const inp={background:"#080c14",border:"1px solid #1e2a3a",borderRadius:6,padding:"7px 10px",
     color:"#e2e8f0",fontSize:12,fontFamily:"inherit",outline:"none",width:"100%"};
-  const sel={...inp,cursor:"pointer"};
-  const lbl={fontSize:10,color:"#64748b",letterSpacing:".06em",textTransform:"uppercase",marginBottom:3,display:"block"};
-  const field=(label,key,el)=>(
-    <div style={{marginBottom:10}}>
-      <span style={lbl}>{label}</span>
-      {el(key)}
+  const lbl={fontSize:10,color:"#64748b",letterSpacing:".06em",textTransform:"uppercase",marginBottom:4,display:"block"};
+
+  // Clickable button group selector
+  const BtnGroup=({fieldKey,opts})=>(
+    <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+      {opts.map(o=>{
+        const active=form[fieldKey]===o.val;
+        return(
+          <div key={o.val} onClick={()=>set(fieldKey,o.val)} style={{
+            padding:"5px 10px",borderRadius:6,cursor:"pointer",fontSize:11,
+            border:`1.5px solid ${active?"#38bdf8":"#1e2a3a"}`,
+            background:active?"rgba(56,189,248,.12)":"#080c14",
+            color:active?"#e2e8f0":"#64748b",fontWeight:active?700:400,
+            transition:"all .12s",lineHeight:1.3,textAlign:"center"
+          }}>
+            <div style={{fontWeight:active?700:500}}>{o.label}</div>
+            {o.sub&&<div style={{fontSize:9,color:active?"#94a3b8":"#334155",marginTop:1}}>{o.sub}</div>}
+          </div>
+        );
+      })}
     </div>
   );
-  const textInput=(key,placeholder)=><input value={form[key]} onChange={e=>set(key,e.target.value)} placeholder={placeholder||""} style={inp}/>;
-  const dropdown=(key,opts)=>(
-    <select value={form[key]} onChange={e=>set(key,e.target.value)} style={sel}>
-      {opts.map(o=><option key={o} value={o}>{o}</option>)}
-    </select>
-  );
+
   return(
     <div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-        {showSetter&&field("Canvasser/Setter Name","setter",k=>textInput(k,"Name"))}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,gridColumn:showSetter?"1/3":"1/3"}}>
-          <div>
-            <span style={lbl}>Appt Date</span>
-            {dropdown("apptDate",["Today","Tomorrow","72+"])}
-          </div>
-          <div>
-            <span style={lbl}>Appt Time</span>
-            {dropdown("apptTime",["9AM","10AM","11AM","1PM","2PM","3PM","5PM","6PM","7PM"])}
-          </div>
-        </div>
-        {field("Ph#","phone",k=>textInput(k,"(000) 000-0000"))}
-        {field("Address","address",k=>textInput(k,"Street, City, FL ZIP"))}
-        <div>
-          <span style={lbl}>Home Type</span>
-          {dropdown("homeType",["SFH","TH","Condo","Villa"])}
-        </div>
-        <div>
-          <span style={lbl}>Residence Type</span>
-          {dropdown("residenceType",["Primary Residence","Investment Property"])}
-        </div>
-        {field("Window Count","windows",k=>textInput(k,"0"))}
-        {field("Door Count","doors",k=>textInput(k,"0"))}
-        {field("Slider Count","sliders",k=>textInput(k,"0"))}
-        <div>
-          <span style={lbl}>Original Windows</span>
-          {dropdown("originalWindows",["Yes","No"])}
-        </div>
-        <div>
-          <span style={lbl}>Main Structure</span>
-          {dropdown("mainStructure",["Yes","No"])}
-        </div>
-        <div>
-          <span style={lbl}>No Resize</span>
-          {dropdown("noResize",["Yes","No"])}
-        </div>
-        <div>
-          <span style={lbl}>Marital Status</span>
-          {dropdown("maritalStatus",["Single","Married","Partners","Siblings","Family/Friends"])}
-        </div>
-        {field("Gate Code","gateCode",k=>textInput(k,"If applicable"))}
-      </div>
+      {/* Customer Name — always shown */}
       <div style={{marginBottom:10}}>
+        <span style={lbl}>Customer Name</span>
+        <input value={form.customerName} onChange={e=>set("customerName",e.target.value)}
+          placeholder="Full name" style={inp}/>
+      </div>
+
+      {/* Promoter — always shown */}
+      <div style={{marginBottom:10}}>
+        <span style={lbl}>Promoter</span>
+        <input value={form.promoter} onChange={e=>set("promoter",e.target.value)}
+          placeholder="Promoter name" style={inp}/>
+      </div>
+
+      {/* Appt Date */}
+      <div style={{marginBottom:10}}>
+        <span style={lbl}>Appt Date</span>
+        <BtnGroup fieldKey="apptDate" opts={[
+          {val:"Today",label:"Today"},{val:"Tomorrow",label:"Tomorrow"},{val:"72+",label:"72+"}
+        ]}/>
+      </div>
+
+      {/* Appt Time */}
+      <div style={{marginBottom:10}}>
+        <span style={lbl}>Appt Time</span>
+        <BtnGroup fieldKey="apptTime" opts={[
+          {val:"9AM",label:"9AM"},{val:"10AM",label:"10AM"},{val:"11AM",label:"11AM"},
+          {val:"1PM",label:"1PM"},{val:"2PM",label:"2PM"},{val:"3PM",label:"3PM"},
+          {val:"5PM",label:"5PM"},{val:"6PM",label:"6PM"},{val:"7PM",label:"7PM"}
+        ]}/>
+      </div>
+
+      {/* Phone */}
+      <div style={{marginBottom:10}}>
+        <span style={lbl}>Ph#</span>
+        <input value={form.phone} onChange={e=>set("phone",e.target.value)}
+          placeholder="(000) 000-0000" style={inp}/>
+      </div>
+
+      {/* Address */}
+      <div style={{marginBottom:10}}>
+        <span style={lbl}>Address</span>
+        <input value={form.address} onChange={e=>set("address",e.target.value)}
+          placeholder="Street, City, FL ZIP" style={inp}/>
+      </div>
+
+      {/* Home Type */}
+      <div style={{marginBottom:10}}>
+        <span style={lbl}>Home Type</span>
+        <BtnGroup fieldKey="homeType" opts={[
+          {val:"SFH",label:"SFH",sub:"(Single Family Home)"},
+          {val:"TH",label:"TH",sub:"(TownHome)"},
+          {val:"Condo",label:"Condo"},
+          {val:"Villa",label:"Villa"}
+        ]}/>
+      </div>
+
+      {/* Residence Type */}
+      <div style={{marginBottom:10}}>
+        <span style={lbl}>Residence Type</span>
+        <BtnGroup fieldKey="residenceType" opts={[
+          {val:"PR",label:"PR",sub:"(Primary Residence)"},
+          {val:"IP",label:"IP",sub:"(Investment Property)"}
+        ]}/>
+      </div>
+
+      {/* Counts row */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
+        <div>
+          <span style={lbl}>Windows</span>
+          <input value={form.windows} onChange={e=>set("windows",e.target.value)} placeholder="0" style={inp}/>
+        </div>
+        <div>
+          <span style={lbl}>Doors</span>
+          <input value={form.doors} onChange={e=>set("doors",e.target.value)} placeholder="0" style={inp}/>
+        </div>
+        <div>
+          <span style={lbl}>Sliders</span>
+          <input value={form.sliders} onChange={e=>set("sliders",e.target.value)} placeholder="0" style={inp}/>
+        </div>
+      </div>
+
+      {/* Original Windows */}
+      <div style={{marginBottom:10}}>
+        <span style={lbl}>Original Windows</span>
+        <BtnGroup fieldKey="originalWindows" opts={[{val:"Yes",label:"Yes"},{val:"No",label:"No"}]}/>
+      </div>
+
+      {/* Main Structure */}
+      <div style={{marginBottom:10}}>
+        <span style={lbl}>Main Structure</span>
+        <BtnGroup fieldKey="mainStructure" opts={[{val:"Yes",label:"Yes"},{val:"No",label:"No"}]}/>
+      </div>
+
+      {/* No Resize */}
+      <div style={{marginBottom:10}}>
+        <span style={lbl}>No Resize</span>
+        <BtnGroup fieldKey="noResize" opts={[{val:"Yes",label:"Yes"},{val:"No",label:"No"}]}/>
+      </div>
+
+      {/* Marital Status */}
+      <div style={{marginBottom:10}}>
+        <span style={lbl}>Marital Status</span>
+        <BtnGroup fieldKey="maritalStatus" opts={[
+          {val:"Single",label:"Single"},{val:"Married",label:"Married"},
+          {val:"Partners",label:"Partners"},{val:"Siblings",label:"Siblings"},
+          {val:"Family/Friends",label:"Family/Friends"}
+        ]}/>
+      </div>
+
+      {/* Gate Code */}
+      <div style={{marginBottom:10}}>
+        <span style={lbl}>Gate Code</span>
+        <input value={form.gateCode} onChange={e=>set("gateCode",e.target.value)}
+          placeholder="If applicable" style={inp}/>
+      </div>
+
+      {/* Notes */}
+      <div style={{marginBottom:12}}>
         <span style={lbl}>Notes</span>
         <textarea value={form.notes} onChange={e=>set("notes",e.target.value)}
           placeholder="Additional notes..."
           style={{...inp,minHeight:60,resize:"vertical"}}/>
       </div>
+
       <button onClick={()=>onSubmit(form)} style={{
         width:"100%",padding:"10px 0",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",
         border:"none",borderRadius:7,color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"
@@ -2098,6 +2183,7 @@ function TrackerTab({allReps,markets}){
   const [interactionType,setInteractionType]=useState(null);
   const [selectedRep,setSelectedRep]=useState("");
   const [dispatchSubtype,setDispatchSubtype]=useState("");
+  const [dispatchNote,setDispatchNote]=useState("");
   const [otherNote,setOtherNote]=useState("");
   const [log,setLog]=useState([]);
   const [filterDispatcher,setFilterDispatcher]=useState("All");
@@ -2124,7 +2210,7 @@ function TrackerTab({allReps,markets}){
     localStorage.setItem("tracker_dispatcher",id);
   };
 
-  const resetFlow=()=>{setSlide(1);setInteractionType(null);setSelectedRep("");setDispatchSubtype("");setOtherNote("");};
+  const resetFlow=()=>{setSlide(1);setInteractionType(null);setSelectedRep("");setDispatchSubtype("");setDispatchNote("");setOtherNote("");};
 
   const activeReps=useMemo(()=>{
     const seen=new Set();const list=[];
@@ -2135,13 +2221,19 @@ function TrackerTab({allReps,markets}){
   },[allReps,markets]);
 
   const submitEntry=(formData)=>{
+    const ts=new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+    let autoNote=null;
+    if(interactionType==="Dispatch"&&selectedRep&&dispatchSubtype){
+      autoNote=`Representative ${selectedRep}, called in ${ts} stating ${dispatchSubtype}${dispatchNote.trim()?" - "+dispatchNote.trim():""}`;
+    }
     const entry={
       id:Date.now()+"_"+Math.random().toString(36).slice(2,7),
       dispatcher,
       type:interactionType,
       rep:selectedRep||null,
       subtype:dispatchSubtype||null,
-      note:otherNote||null,
+      note:interactionType==="Other"?(otherNote||null):autoNote,
+      dispatchNote:dispatchNote||null,
       form:formData||null,
       timestamp:Date.now(),
       status:"active",
@@ -2201,9 +2293,11 @@ function TrackerTab({allReps,markets}){
           {entry.rep&&<span style={{fontSize:11,color:"#94a3b8"}}>→ {entry.rep}</span>}
           {entry.subtype&&<span style={{fontSize:11,color:"#64748b",background:"#1e2a3a",
             padding:"1px 6px",borderRadius:3}}>{entry.subtype}</span>}
-          {entry.note&&<span style={{fontSize:11,color:"#64748b",fontStyle:"italic"}}>"{entry.note}"</span>}
-          {entry.form&&entry.type==="Confirming"&&entry.form.setter&&
-            <span style={{fontSize:10,color:"#64748b"}}>Set by: {entry.form.setter}</span>}
+          {entry.note&&<span style={{fontSize:11,color:"#64748b",fontStyle:"italic",maxWidth:300,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>"{entry.note}"</span>}
+          {entry.form&&entry.form.customerName&&
+            <span style={{fontSize:10,color:"#64748b"}}>👤 {entry.form.customerName}</span>}
+          {entry.form&&entry.form.promoter&&
+            <span style={{fontSize:10,color:"#64748b"}}>📢 {entry.form.promoter}</span>}
           {entry.form&&(entry.type==="Setting"||entry.type==="Confirming")&&(
             <span style={{fontSize:10,color:"#64748b"}}>
               {entry.form.apptDate} @ {entry.form.apptTime} · {entry.form.homeType}
@@ -2306,15 +2400,22 @@ function TrackerTab({allReps,markets}){
                 {/* DISPATCH */}
                 {interactionType==="Dispatch"&&(
                   <div>
-                    <div style={{marginBottom:10}}>
-                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Rep</div>
-                      <select value={selectedRep} onChange={e=>setSelectedRep(e.target.value)} style={{...sel,width:"100%"}}>
-                        <option value="">— select rep —</option>
-                        {activeReps.map(r=><option key={r} value={r}>{r}</option>)}
-                      </select>
+                    <div style={{marginBottom:12}}>
+                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>Rep</div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,maxHeight:200,overflowY:"auto"}}>
+                        {activeReps.map(r=>(
+                          <div key={r} onClick={()=>setSelectedRep(r)} style={{
+                            padding:"7px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:selectedRep===r?700:400,
+                            border:`1.5px solid ${selectedRep===r?"#38bdf8":"#1e2a3a"}`,
+                            background:selectedRep===r?"rgba(56,189,248,.12)":"#080c14",
+                            color:selectedRep===r?"#e2e8f0":"#64748b",
+                            transition:"all .12s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"
+                          }}>{r}</div>
+                        ))}
+                      </div>
                     </div>
-                    <div style={{marginBottom:14}}>
-                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Interaction</div>
+                    <div style={{marginBottom:12}}>
+                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>Interaction</div>
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
                         {DISPATCH_SUBTYPES.map(s=>(
                           <div key={s} onClick={()=>setDispatchSubtype(s)} style={{
@@ -2326,6 +2427,21 @@ function TrackerTab({allReps,markets}){
                           }}>{s}</div>
                         ))}
                       </div>
+                    </div>
+                    <div style={{marginBottom:14}}>
+                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Note (optional)</div>
+                      <textarea value={dispatchNote} onChange={e=>setDispatchNote(e.target.value)}
+                        placeholder="Additional detail about this dispatch..."
+                        style={{background:"#080c14",border:"1px solid #1e2a3a",borderRadius:6,
+                          padding:"8px 10px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",
+                          outline:"none",width:"100%",minHeight:60,resize:"vertical"}}/>
+                      {selectedRep&&dispatchSubtype&&(
+                        <div style={{marginTop:6,padding:"7px 10px",background:"rgba(56,189,248,.05)",
+                          border:"1px solid rgba(56,189,248,.15)",borderRadius:6,fontSize:10,color:"#64748b",
+                          lineHeight:1.6,fontStyle:"italic"}}>
+                          📋 Preview: <span style={{color:"#94a3b8"}}>Representative {selectedRep}, called in [time] stating {dispatchSubtype}{dispatchNote.trim()?" - "+dispatchNote.trim():""}</span>
+                        </div>
+                      )}
                     </div>
                     <button onClick={submitDispatch}
                       disabled={!selectedRep||!dispatchSubtype}
@@ -2341,11 +2457,18 @@ function TrackerTab({allReps,markets}){
                 {interactionType==="Setting"&&(
                   <div>
                     <div style={{marginBottom:12}}>
-                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Rep</div>
-                      <select value={selectedRep} onChange={e=>setSelectedRep(e.target.value)} style={{...sel,width:"100%"}}>
-                        <option value="">— select rep —</option>
-                        {activeReps.map(r=><option key={r} value={r}>{r}</option>)}
-                      </select>
+                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>Rep</div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,maxHeight:200,overflowY:"auto"}}>
+                        {activeReps.map(r=>(
+                          <div key={r} onClick={()=>setSelectedRep(r)} style={{
+                            padding:"7px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:selectedRep===r?700:400,
+                            border:`1.5px solid ${selectedRep===r?"#4ade80":"#1e2a3a"}`,
+                            background:selectedRep===r?"rgba(74,222,128,.12)":"#080c14",
+                            color:selectedRep===r?"#e2e8f0":"#64748b",
+                            transition:"all .12s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"
+                          }}>{r}</div>
+                        ))}
+                      </div>
                     </div>
                     {selectedRep&&<ConfirmingForm onSubmit={submitEntry} showSetter={false}/>}
                   </div>
@@ -2355,11 +2478,18 @@ function TrackerTab({allReps,markets}){
                 {interactionType==="Confirming"&&(
                   <div>
                     <div style={{marginBottom:12}}>
-                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Rep</div>
-                      <select value={selectedRep} onChange={e=>setSelectedRep(e.target.value)} style={{...sel,width:"100%"}}>
-                        <option value="">— select rep —</option>
-                        {activeReps.map(r=><option key={r} value={r}>{r}</option>)}
-                      </select>
+                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>Rep</div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,maxHeight:200,overflowY:"auto"}}>
+                        {activeReps.map(r=>(
+                          <div key={r} onClick={()=>setSelectedRep(r)} style={{
+                            padding:"7px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:selectedRep===r?700:400,
+                            border:`1.5px solid ${selectedRep===r?"#f59e0b":"#1e2a3a"}`,
+                            background:selectedRep===r?"rgba(245,158,11,.12)":"#080c14",
+                            color:selectedRep===r?"#e2e8f0":"#64748b",
+                            transition:"all .12s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"
+                          }}>{r}</div>
+                        ))}
+                      </div>
                     </div>
                     {selectedRep&&<ConfirmingForm onSubmit={submitEntry} showSetter={true}/>}
                   </div>
@@ -2368,12 +2498,26 @@ function TrackerTab({allReps,markets}){
                 {/* OTHER */}
                 {interactionType==="Other"&&(
                   <div>
-                    <div style={{marginBottom:10}}>
-                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Rep (optional)</div>
-                      <select value={selectedRep} onChange={e=>setSelectedRep(e.target.value)} style={{...sel,width:"100%"}}>
-                        <option value="">— none —</option>
-                        {activeReps.map(r=><option key={r} value={r}>{r}</option>)}
-                      </select>
+                    <div style={{marginBottom:12}}>
+                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>Rep (optional)</div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,maxHeight:160,overflowY:"auto"}}>
+                        <div onClick={()=>setSelectedRep("")} style={{
+                          padding:"7px 10px",borderRadius:6,cursor:"pointer",fontSize:11,
+                          border:`1.5px solid ${selectedRep===""?"#a78bfa":"#1e2a3a"}`,
+                          background:selectedRep===""?"rgba(167,139,250,.12)":"#080c14",
+                          color:selectedRep===""?"#e2e8f0":"#64748b",
+                          transition:"all .12s",textAlign:"center",fontStyle:"italic"
+                        }}>— none —</div>
+                        {activeReps.map(r=>(
+                          <div key={r} onClick={()=>setSelectedRep(r)} style={{
+                            padding:"7px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:selectedRep===r?700:400,
+                            border:`1.5px solid ${selectedRep===r?"#a78bfa":"#1e2a3a"}`,
+                            background:selectedRep===r?"rgba(167,139,250,.12)":"#080c14",
+                            color:selectedRep===r?"#e2e8f0":"#64748b",
+                            transition:"all .12s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"
+                          }}>{r}</div>
+                        ))}
+                      </div>
                     </div>
                     <div style={{marginBottom:12}}>
                       <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Note</div>
