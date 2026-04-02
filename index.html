@@ -2182,13 +2182,13 @@ function TrackerTab({allReps,markets}){
   const [slide,setSlide]=useState(1); // 1=type, 2=details
   const [interactionType,setInteractionType]=useState(null);
   const [selectedRep,setSelectedRep]=useState("");
+  const [repSearch,setRepSearch]=useState("");
   const [dispatchSubtype,setDispatchSubtype]=useState("");
   const [dispatchNote,setDispatchNote]=useState("");
   const [otherNote,setOtherNote]=useState("");
   const [log,setLog]=useState([]);
   const [filterDispatcher,setFilterDispatcher]=useState("All");
-  const [trackerView,setTrackerView]=useState("intake"); // "intake" | "log"
-  const [copiedId,setCopiedId]=useState(null);
+  const [trackerView,setTrackerView]=useState("intake");
   const now=useNow();
 
   // Load log from Firebase on mount + poll every 10s for real-time
@@ -2212,7 +2212,7 @@ function TrackerTab({allReps,markets}){
     localStorage.setItem("tracker_dispatcher",id);
   };
 
-  const resetFlow=()=>{setSlide(1);setInteractionType(null);setSelectedRep("");setDispatchSubtype("");setDispatchNote("");setOtherNote("");};
+  const resetFlow=()=>{setSlide(1);setInteractionType(null);setSelectedRep("");setRepSearch("");setDispatchSubtype("");setDispatchNote("");setOtherNote("");};
 
   const activeReps=useMemo(()=>{
     const seen=new Set();const list=[];
@@ -2226,7 +2226,7 @@ function TrackerTab({allReps,markets}){
     const ts=new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
     let autoNote=null;
     if(interactionType==="Dispatch"&&selectedRep&&dispatchSubtype){
-      const nameParts=selectedRep.includes(",")?selectedRep.split(",").map(s=>s.trim()):null;
+      const nameParts=selectedRep.includes(",")?selectedRep.split(",").map(p=>p.trim()):null;
       const fmtName=nameParts?`${nameParts[1]} ${nameParts[0]}`:selectedRep;
       autoNote=`Rep ${fmtName} called in ${ts} stating ${dispatchSubtype}${dispatchNote.trim()?" - "+dispatchNote.trim():""}`;
     }
@@ -2277,6 +2277,11 @@ function TrackerTab({allReps,markets}){
     const isDone=entry.status==="done";
     const dc=dispColor(entry.dispatcher);
     const tc=typeColor(entry.type);
+    const [copied,setCopied]=useState(false);
+    const copyNote=()=>{
+      if(!entry.note)return;
+      navigator.clipboard.writeText(entry.note).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);});
+    };
     return(
       <div style={{
         background:isDone?"#080c14":isUrgent?"rgba(239,68,68,.06)":"#0d1120",
@@ -2322,19 +2327,18 @@ function TrackerTab({allReps,markets}){
           )}
         </div>
         {entry.note&&(
-          <div style={{marginTop:8,display:"flex",alignItems:"flex-start",gap:8,
-            background:"rgba(255,255,255,.03)",border:"1px solid #1e2a3a",
-            borderRadius:6,padding:"8px 10px"}}>
-            <span style={{fontSize:12,color:"#94a3b8",fontStyle:"italic",flex:1,lineHeight:1.6}}>{entry.note}</span>
-            <button onClick={()=>{navigator.clipboard.writeText(entry.note);setCopiedId(entry.id);setTimeout(()=>setCopiedId(null),2000);}}
-              style={{flexShrink:0,background:copiedId===entry.id?"rgba(74,222,128,.12)":"rgba(255,255,255,.05)",
-                border:`1px solid ${copiedId===entry.id?"rgba(74,222,128,.3)":"#1e2a3a"}`,
-                borderRadius:5,padding:"3px 10px",
-                color:copiedId===entry.id?"#4ade80":"#64748b",
-                cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600,whiteSpace:"nowrap",
-                transition:"all .2s"}}>
-              {copiedId===entry.id?"✓ Copied":"Copy"}
-            </button>
+          <div style={{marginTop:8,display:"flex",alignItems:"flex-start",gap:8}}>
+            <div style={{flex:1,fontSize:11,color:"#94a3b8",fontStyle:"italic",
+              background:"rgba(255,255,255,.03)",border:"1px solid #1e2a3a",
+              borderRadius:6,padding:"7px 10px",lineHeight:1.6,wordBreak:"break-word"}}>
+              {entry.note}
+            </div>
+            <button onClick={copyNote} style={{
+              flexShrink:0,background:copied?"rgba(74,222,128,.12)":"rgba(255,255,255,.04)",
+              border:`1px solid ${copied?"rgba(74,222,128,.3)":"#1e2a3a"}`,
+              borderRadius:5,padding:"6px 10px",color:copied?"#4ade80":"#475569",
+              cursor:"pointer",fontSize:11,fontFamily:"inherit",transition:"all .2s",whiteSpace:"nowrap"
+            }}>{copied?"✓ Copied":"📋 Copy"}</button>
           </div>
         )}
         {entry.form&&(entry.type==="Setting"||entry.type==="Confirming")&&(
@@ -2358,17 +2362,17 @@ function TrackerTab({allReps,markets}){
   return(
     <div style={{height:"calc(100vh - 52px)",overflow:"hidden",display:"flex",flexDirection:"column",background:"#080c14"}}>
 
-      {/* Toggle Bar */}
+      {/* Toggle bar */}
       <div style={{background:"#0d1120",borderBottom:"1px solid #1e2a3a",padding:"10px 20px",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-        {[{k:"intake",label:"📝 Intake"},{k:"log",label:"📋 Activity Log"}].map(({k,label})=>(
-          <button key={k} onClick={()=>setTrackerView(k)} style={{
-            padding:"7px 20px",borderRadius:7,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer",
-            border:`1.5px solid ${trackerView===k?"#fb923c":"#1e2a3a"}`,
-            background:trackerView===k?"rgba(251,146,60,.12)":"transparent",
-            color:trackerView===k?"#fb923c":"#64748b",
-            transition:"all .15s"
-          }}>{label}</button>
-        ))}
+        <div style={{display:"flex",background:"#080c14",border:"1px solid #1e2a3a",borderRadius:8,padding:3,gap:3}}>
+          {[["intake","📋 Intake"],["log","📄 Activity Log"]].map(([v,label])=>(
+            <button key={v} onClick={()=>setTrackerView(v)} style={{
+              padding:"6px 18px",borderRadius:6,fontFamily:"inherit",fontSize:12,cursor:"pointer",border:"none",
+              background:trackerView===v?"linear-gradient(135deg,#0ea5e9,#6366f1)":"transparent",
+              color:trackerView===v?"#fff":"#475569",fontWeight:trackerView===v?700:400,transition:"all .15s"
+            }}>{label}</button>
+          ))}
+        </div>
         {trackerView==="log"&&(
           <div style={{display:"flex",gap:6,marginLeft:"auto"}}>
             {["All","RJ","BR","JF"].map(d=>(
@@ -2383,243 +2387,206 @@ function TrackerTab({allReps,markets}){
             ))}
           </div>
         )}
+        {trackerView==="log"&&(
+          <span style={{fontSize:11,color:"#334155"}}>
+            {log.length} entries · updates every 10s
+          </span>
+        )}
       </div>
 
       {/* INTAKE VIEW */}
       {trackerView==="intake"&&(
-        <div style={{overflowY:"auto",flex:1,maxWidth:480,width:"100%",margin:"0 auto",padding:20}}>
+        <div style={{flex:1,overflowY:"auto",maxWidth:480,width:"100%",padding:20,alignSelf:"center"}}>
 
-        {/* Dispatcher selector — always visible */}
-        <div style={{marginBottom:20}}>
-          <div style={{fontSize:10,color:"#334155",letterSpacing:".08em",marginBottom:10,textTransform:"uppercase"}}>
-            Who are you?
-          </div>
-          <div style={{display:"flex",gap:8}}>
-            {DISPATCHERS.map(d=>(
-              <div key={d.id} onClick={()=>selectDispatcher(d.id)} style={{
-                flex:1,padding:"14px 8px",borderRadius:8,textAlign:"center",cursor:"pointer",
-                border:`2px solid ${dispatcher===d.id?d.color:"#1e2a3a"}`,
-                background:dispatcher===d.id?d.bg:"#080c14",
-                transition:"all .15s"
-              }}>
-                <div style={{fontSize:22,fontWeight:900,color:dispatcher===d.id?d.color:"#334155",lineHeight:1}}>{d.id}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {!dispatcher&&(
-          <div style={{textAlign:"center",color:"#334155",padding:"40px 0",fontSize:13}}>
-            Select your name above to begin logging
-          </div>
-        )}
-
-        {dispatcher&&(
-          <>
-            {/* Slide 1 — Interaction Type */}
-            <div style={{marginBottom:20}}>
-              <div style={{fontSize:10,color:"#334155",letterSpacing:".08em",marginBottom:10,textTransform:"uppercase"}}>
-                Interaction Type
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                {INTERACTION_TYPES.map(t=>(
-                  <div key={t} onClick={()=>{setInteractionType(t);setSlide(2);setSelectedRep("");setDispatchSubtype("");}}
-                    style={{
-                      padding:"12px 8px",borderRadius:8,textAlign:"center",cursor:"pointer",
-                      border:`1.5px solid ${interactionType===t?typeColor(t):"#1e2a3a"}`,
-                      background:interactionType===t?`${typeColor(t)}12`:"#080c14",
-                      color:interactionType===t?typeColor(t):"#64748b",
-                      fontWeight:interactionType===t?700:400,fontSize:13,
-                      transition:"all .15s"
-                    }}>{t}</div>
-                ))}
-              </div>
-            </div>
-
-            {/* Slide 2 — Details */}
-            {interactionType&&(
-              <div style={{borderTop:"1px solid #1e2a3a",paddingTop:16}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-                  <div style={{fontSize:12,fontWeight:700,color:typeColor(interactionType)}}>{interactionType}</div>
-                  <button onClick={resetFlow} style={{background:"none",border:"none",color:"#334155",cursor:"pointer",fontSize:11,fontFamily:"inherit"}}>✕ Reset</button>
+          {/* Dispatcher selector */}
+          <div style={{marginBottom:20}}>
+            <div style={{fontSize:10,color:"#334155",letterSpacing:".08em",marginBottom:10,textTransform:"uppercase"}}>Who are you?</div>
+            <div style={{display:"flex",gap:8}}>
+              {DISPATCHERS.map(d=>(
+                <div key={d.id} onClick={()=>selectDispatcher(d.id)} style={{
+                  flex:1,padding:"14px 8px",borderRadius:8,textAlign:"center",cursor:"pointer",
+                  border:`2px solid ${dispatcher===d.id?d.color:"#1e2a3a"}`,
+                  background:dispatcher===d.id?d.bg:"#080c14",transition:"all .15s"
+                }}>
+                  <div style={{fontSize:22,fontWeight:900,color:dispatcher===d.id?d.color:"#334155",lineHeight:1}}>{d.id}</div>
                 </div>
+              ))}
+            </div>
+          </div>
 
-                {/* DISPATCH */}
-                {interactionType==="Dispatch"&&(
-                  <div>
-                    <div style={{marginBottom:12}}>
-                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>Rep</div>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,maxHeight:200,overflowY:"auto"}}>
-                        {activeReps.map(r=>(
-                          <div key={r} onClick={()=>setSelectedRep(r)} style={{
-                            padding:"7px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:selectedRep===r?700:400,
-                            border:`1.5px solid ${selectedRep===r?"#38bdf8":"#1e2a3a"}`,
-                            background:selectedRep===r?"rgba(56,189,248,.12)":"#080c14",
-                            color:selectedRep===r?"#e2e8f0":"#64748b",
-                            transition:"all .12s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"
-                          }}>{r}</div>
-                        ))}
+          {!dispatcher&&(
+            <div style={{textAlign:"center",color:"#334155",padding:"40px 0",fontSize:13}}>
+              Select your name above to begin logging
+            </div>
+          )}
+
+          {dispatcher&&(
+            <>
+              {!interactionType&&(
+                <div>
+                  <div style={{fontSize:10,color:"#334155",letterSpacing:".08em",marginBottom:10,textTransform:"uppercase"}}>Interaction Type</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                    {INTERACTION_TYPES.map(t=>(
+                      <div key={t} onClick={()=>{setInteractionType(t);setSlide(2);}} style={{
+                        padding:"18px 10px",borderRadius:8,textAlign:"center",cursor:"pointer",
+                        border:`1.5px solid ${typeColor(t)}22`,background:`${typeColor(t)}0a`,
+                        color:typeColor(t),fontWeight:700,fontSize:13,transition:"all .15s"
+                      }}>{t}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {interactionType&&(
+                <div>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                    <div style={{fontSize:12,fontWeight:700,color:typeColor(interactionType)}}>{interactionType}</div>
+                    <button onClick={resetFlow} style={{background:"none",border:"none",color:"#334155",cursor:"pointer",fontSize:11,fontFamily:"inherit"}}>✕ Reset</button>
+                  </div>
+
+                  {/* DISPATCH */}
+                  {interactionType==="Dispatch"&&(
+                    <div>
+                      <div style={{marginBottom:12,position:"relative"}}>
+                        <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:6,textTransform:"uppercase"}}>Rep</div>
+                        <input value={repSearch}
+                          onChange={e=>{setRepSearch(e.target.value);setSelectedRep("");}}
+                          placeholder="Type first or last name..."
+                          style={{background:"#080c14",border:`1px solid ${selectedRep?"#38bdf8":"#1e2a3a"}`,borderRadius:6,
+                            padding:"7px 10px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",outline:"none",width:"100%"}}/>
+                        {repSearch&&!selectedRep&&(()=>{
+                          const filtered=activeReps.filter(r=>r.toLowerCase().includes(repSearch.toLowerCase()));
+                          return filtered.length>0?(
+                            <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:20,
+                              background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:6,maxHeight:160,overflowY:"auto",marginTop:2}}>
+                              {filtered.map(r=>(
+                                <div key={r} onMouseDown={()=>{setSelectedRep(r);setRepSearch(r);}} style={{
+                                  padding:"8px 10px",cursor:"pointer",fontSize:12,color:"#94a3b8",borderBottom:"1px solid #1e2a3a"}}
+                                  onMouseEnter={e=>e.currentTarget.style.background="rgba(56,189,248,.08)"}
+                                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{r}</div>
+                              ))}
+                            </div>
+                          ):repSearch.length>0?(
+                            <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:20,
+                              background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:6,padding:"10px",fontSize:11,color:"#334155",marginTop:2}}>No reps found</div>
+                          ):null;
+                        })()}
+                        {selectedRep&&(
+                          <div style={{marginTop:5,fontSize:11,color:"#38bdf8",fontWeight:700}}>
+                            ✓ {selectedRep}
+                            <span onClick={()=>{setSelectedRep("");setRepSearch("");}} style={{marginLeft:8,color:"#334155",cursor:"pointer",fontWeight:400}}>✕</span>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                    <div style={{marginBottom:12}}>
-                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>Interaction</div>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-                        {DISPATCH_SUBTYPES.map(s=>(
-                          <div key={s} onClick={()=>setDispatchSubtype(s)} style={{
-                            padding:"8px 10px",borderRadius:6,cursor:"pointer",textAlign:"center",fontSize:11,
-                            border:`1.5px solid ${dispatchSubtype===s?"#38bdf8":"#1e2a3a"}`,
-                            background:dispatchSubtype===s?"rgba(56,189,248,.1)":"#080c14",
-                            color:dispatchSubtype===s?"#38bdf8":"#64748b",
-                            transition:"all .15s"
-                          }}>{s}</div>
-                        ))}
-                      </div>
-                    </div>
-                    <div style={{marginBottom:14}}>
-                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Note (optional)</div>
-                      <textarea value={dispatchNote} onChange={e=>setDispatchNote(e.target.value)}
-                        placeholder="Additional detail about this dispatch..."
-                        style={{background:"#080c14",border:"1px solid #1e2a3a",borderRadius:6,
-                          padding:"8px 10px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",
-                          outline:"none",width:"100%",minHeight:60,resize:"vertical"}}/>
-                      {selectedRep&&dispatchSubtype&&(
-                        <div style={{marginTop:6,padding:"7px 10px",background:"rgba(56,189,248,.05)",
-                          border:"1px solid rgba(56,189,248,.15)",borderRadius:6,fontSize:10,color:"#64748b",
-                          lineHeight:1.6,fontStyle:"italic"}}>
-                          📋 Preview: <span style={{color:"#94a3b8"}}>Rep {(()=>{const p=selectedRep.includes(",")?selectedRep.split(",").map(s=>s.trim()):null;return p?`${p[1]} ${p[0]}`:selectedRep;})()}, called in [time] stating {dispatchSubtype}{dispatchNote.trim()?" - "+dispatchNote.trim():""}</span>
+                      <div style={{marginBottom:12}}>
+                        <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>Interaction</div>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                          {DISPATCH_SUBTYPES.map(s=>(
+                            <div key={s} onClick={()=>setDispatchSubtype(s)} style={{
+                              padding:"8px 10px",borderRadius:6,cursor:"pointer",textAlign:"center",fontSize:11,
+                              border:`1.5px solid ${dispatchSubtype===s?"#38bdf8":"#1e2a3a"}`,
+                              background:dispatchSubtype===s?"rgba(56,189,248,.1)":"#080c14",
+                              color:dispatchSubtype===s?"#38bdf8":"#64748b",transition:"all .15s"
+                            }}>{s}</div>
+                          ))}
                         </div>
-                      )}
-                    </div>
-                    <button onClick={submitDispatch}
-                      disabled={!selectedRep||!dispatchSubtype}
-                      style={{width:"100%",padding:"10px 0",
-                        background:(!selectedRep||!dispatchSubtype)?"#1e2a3a":"linear-gradient(135deg,#0ea5e9,#6366f1)",
-                        border:"none",borderRadius:7,color:(!selectedRep||!dispatchSubtype)?"#334155":"#fff",
-                        fontWeight:700,fontSize:13,cursor:(!selectedRep||!dispatchSubtype)?"not-allowed":"pointer",fontFamily:"inherit"
-                      }}>Log Entry</button>
-                  </div>
-                )}
-
-                {/* SETTING */}
-                {interactionType==="Setting"&&(
-                  <div>
-                    <div style={{marginBottom:12}}>
-                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>Rep</div>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,maxHeight:200,overflowY:"auto"}}>
-                        {activeReps.map(r=>(
-                          <div key={r} onClick={()=>setSelectedRep(r)} style={{
-                            padding:"7px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:selectedRep===r?700:400,
-                            border:`1.5px solid ${selectedRep===r?"#4ade80":"#1e2a3a"}`,
-                            background:selectedRep===r?"rgba(74,222,128,.12)":"#080c14",
-                            color:selectedRep===r?"#e2e8f0":"#64748b",
-                            transition:"all .12s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"
-                          }}>{r}</div>
-                        ))}
                       </div>
-                    </div>
-                    {selectedRep&&<ConfirmingForm onSubmit={submitEntry} showSetter={false}/>}
-                  </div>
-                )}
-
-                {/* CONFIRMING */}
-                {interactionType==="Confirming"&&(
-                  <div>
-                    <div style={{marginBottom:12}}>
-                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>Rep</div>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,maxHeight:200,overflowY:"auto"}}>
-                        {activeReps.map(r=>(
-                          <div key={r} onClick={()=>setSelectedRep(r)} style={{
-                            padding:"7px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:selectedRep===r?700:400,
-                            border:`1.5px solid ${selectedRep===r?"#f59e0b":"#1e2a3a"}`,
-                            background:selectedRep===r?"rgba(245,158,11,.12)":"#080c14",
-                            color:selectedRep===r?"#e2e8f0":"#64748b",
-                            transition:"all .12s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"
-                          }}>{r}</div>
-                        ))}
+                      <div style={{marginBottom:14}}>
+                        <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Note (optional)</div>
+                        <textarea value={dispatchNote} onChange={e=>setDispatchNote(e.target.value)}
+                          placeholder="Additional detail..."
+                          style={{background:"#080c14",border:"1px solid #1e2a3a",borderRadius:6,
+                            padding:"8px 10px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",
+                            outline:"none",width:"100%",minHeight:60,resize:"vertical"}}/>
+                        {selectedRep&&dispatchSubtype&&(
+                          <div style={{marginTop:6,padding:"7px 10px",background:"rgba(56,189,248,.05)",
+                            border:"1px solid rgba(56,189,248,.15)",borderRadius:6,fontSize:10,color:"#64748b",lineHeight:1.6,fontStyle:"italic"}}>
+                            📋 Preview: <span style={{color:"#94a3b8"}}>Rep {(()=>{const p=selectedRep.includes(",")?selectedRep.split(",").map(s=>s.trim()):null;return p?`${p[1]} ${p[0]}`:selectedRep;})()}, called in [time] stating {dispatchSubtype}{dispatchNote.trim()?" - "+dispatchNote.trim():""}</span>
+                          </div>
+                        )}
                       </div>
+                      <button onClick={submitDispatch} disabled={!selectedRep||!dispatchSubtype}
+                        style={{width:"100%",padding:"10px 0",
+                          background:(!selectedRep||!dispatchSubtype)?"#1e2a3a":"linear-gradient(135deg,#0ea5e9,#6366f1)",
+                          border:"none",borderRadius:7,color:(!selectedRep||!dispatchSubtype)?"#334155":"#fff",
+                          fontWeight:700,fontSize:13,cursor:(!selectedRep||!dispatchSubtype)?"not-allowed":"pointer",fontFamily:"inherit"
+                        }}>Log Entry</button>
                     </div>
-                    {selectedRep&&<ConfirmingForm onSubmit={submitEntry} showSetter={true}/>}
-                  </div>
-                )}
+                  )}
 
-                {/* OTHER */}
-                {interactionType==="Other"&&(
-                  <div>
-                    <div style={{marginBottom:12}}>
-                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>Rep (optional)</div>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,maxHeight:160,overflowY:"auto"}}>
-                        <div onClick={()=>setSelectedRep("")} style={{
-                          padding:"7px 10px",borderRadius:6,cursor:"pointer",fontSize:11,
-                          border:`1.5px solid ${selectedRep===""?"#a78bfa":"#1e2a3a"}`,
-                          background:selectedRep===""?"rgba(167,139,250,.12)":"#080c14",
-                          color:selectedRep===""?"#e2e8f0":"#64748b",
-                          transition:"all .12s",textAlign:"center",fontStyle:"italic"
-                        }}>— none —</div>
-                        {activeReps.map(r=>(
-                          <div key={r} onClick={()=>setSelectedRep(r)} style={{
-                            padding:"7px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:selectedRep===r?700:400,
-                            border:`1.5px solid ${selectedRep===r?"#a78bfa":"#1e2a3a"}`,
-                            background:selectedRep===r?"rgba(167,139,250,.12)":"#080c14",
-                            color:selectedRep===r?"#e2e8f0":"#64748b",
-                            transition:"all .12s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"
-                          }}>{r}</div>
-                        ))}
+                  {/* SETTING — no rep selector */}
+                  {interactionType==="Setting"&&(
+                    <ConfirmingForm onSubmit={submitEntry} showSetter={false}/>
+                  )}
+
+                  {/* CONFIRMING — no rep selector */}
+                  {interactionType==="Confirming"&&(
+                    <ConfirmingForm onSubmit={submitEntry} showSetter={true}/>
+                  )}
+
+                  {/* OTHER */}
+                  {interactionType==="Other"&&(
+                    <div>
+                      <div style={{marginBottom:12}}>
+                        <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>Rep (optional)</div>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,maxHeight:160,overflowY:"auto"}}>
+                          <div onClick={()=>setSelectedRep("")} style={{
+                            padding:"7px 10px",borderRadius:6,cursor:"pointer",fontSize:11,
+                            border:`1.5px solid ${selectedRep===""?"#a78bfa":"#1e2a3a"}`,
+                            background:selectedRep===""?"rgba(167,139,250,.12)":"#080c14",
+                            color:selectedRep===""?"#e2e8f0":"#64748b",
+                            transition:"all .12s",textAlign:"center",fontStyle:"italic"
+                          }}>— none —</div>
+                          {activeReps.map(r=>(
+                            <div key={r} onClick={()=>setSelectedRep(r)} style={{
+                              padding:"7px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:selectedRep===r?700:400,
+                              border:`1.5px solid ${selectedRep===r?"#a78bfa":"#1e2a3a"}`,
+                              background:selectedRep===r?"rgba(167,139,250,.12)":"#080c14",
+                              color:selectedRep===r?"#e2e8f0":"#64748b",
+                              transition:"all .12s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"
+                            }}>{r}</div>
+                          ))}
+                        </div>
                       </div>
+                      <div style={{marginBottom:12}}>
+                        <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Note</div>
+                        <textarea value={otherNote} onChange={e=>setOtherNote(e.target.value)}
+                          placeholder="What happened?"
+                          style={{background:"#080c14",border:"1px solid #1e2a3a",borderRadius:6,
+                            padding:"8px 10px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",
+                            outline:"none",width:"100%",minHeight:80,resize:"vertical"}}/>
+                      </div>
+                      <button onClick={()=>submitEntry(null)} disabled={!otherNote.trim()}
+                        style={{width:"100%",padding:"10px 0",
+                          background:!otherNote.trim()?"#1e2a3a":"linear-gradient(135deg,#a78bfa,#6366f1)",
+                          border:"none",borderRadius:7,color:!otherNote.trim()?"#334155":"#fff",
+                          fontWeight:700,fontSize:13,cursor:!otherNote.trim()?"not-allowed":"pointer",fontFamily:"inherit"
+                        }}>Log Entry</button>
                     </div>
-                    <div style={{marginBottom:12}}>
-                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Note</div>
-                      <textarea value={otherNote} onChange={e=>setOtherNote(e.target.value)}
-                        placeholder="What happened?"
-                        style={{background:"#080c14",border:"1px solid #1e2a3a",borderRadius:6,
-                          padding:"8px 10px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",
-                          outline:"none",width:"100%",minHeight:80,resize:"vertical"}}/>
-                    </div>
-                    <button onClick={()=>submitEntry(null)} disabled={!otherNote.trim()}
-                      style={{width:"100%",padding:"10px 0",
-                        background:!otherNote.trim()?"#1e2a3a":"linear-gradient(135deg,#a78bfa,#6366f1)",
-                        border:"none",borderRadius:7,color:!otherNote.trim()?"#334155":"#fff",
-                        fontWeight:700,fontSize:13,cursor:!otherNote.trim()?"not-allowed":"pointer",fontFamily:"inherit"
-                      }}>Log Entry</button>
-                  </div>
-                )}
-              </div>
-            )}
-          </>
-        )}
+                  )}
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 
       {/* LOG VIEW */}
       {trackerView==="log"&&(
-        <div style={{overflowY:"auto",flex:1,padding:20,maxWidth:860,width:"100%",margin:"0 auto"}}>
-
-          {/* Urgent bucket */}
+        <div style={{flex:1,overflowY:"auto",padding:20}}>
           {urgent.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).length>0&&(
             <div style={{marginBottom:20,background:"rgba(239,68,68,.04)",border:"1px solid rgba(239,68,68,.25)",borderRadius:10,padding:14}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
                 <span style={{fontSize:13,fontWeight:800,color:"#ef4444"}}>🚨 URGENT</span>
                 <span style={{fontSize:11,color:"#ef4444",opacity:.7}}>— tasks over 5 minutes</span>
-                <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:"#ef4444",
-                  background:"rgba(239,68,68,.15)",padding:"2px 8px",borderRadius:12}}>
+                <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:"#ef4444",background:"rgba(239,68,68,.15)",padding:"2px 8px",borderRadius:12}}>
                   {urgent.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).length}
                 </span>
               </div>
               {urgent.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).map(e=><LogEntry key={e.id} entry={e}/>)}
             </div>
           )}
-
-          {/* Header */}
-          <div style={{fontWeight:700,fontSize:13,color:"#e2e8f0",marginBottom:14}}>
-            Activity Log
-            <span style={{marginLeft:8,fontSize:11,color:"#334155",fontWeight:400}}>
-              {log.length} entries · updates every 10s
-            </span>
-          </div>
-
-          {/* Active (non-urgent) */}
           {active.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).map(e=><LogEntry key={e.id} entry={e}/>)}
-
-          {/* Done */}
           {done.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).length>0&&(
             <div style={{marginTop:16}}>
               <div style={{fontSize:10,color:"#1e2a3a",letterSpacing:".08em",textTransform:"uppercase",marginBottom:8,paddingTop:8,borderTop:"1px solid #1e2a3a"}}>
@@ -2628,7 +2595,6 @@ function TrackerTab({allReps,markets}){
               {done.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).map(e=><LogEntry key={e.id} entry={e}/>)}
             </div>
           )}
-
           {filteredLog.length===0&&(
             <div style={{textAlign:"center",color:"#1e2a3a",padding:"60px 0",fontSize:13}}>
               No activity logged yet
