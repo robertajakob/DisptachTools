@@ -1519,14 +1519,6 @@ function RepMapTab({allReps,markets}){
   const [qTo,setQTo]=useState("");
   const [qResult,setQResult]=useState(null);
   const [qLoading,setQLoading]=useState(false);
-  // Route Check tab — sequential appointment routing
-  const [rcAppts,setRcAppts]=useState(["",""]);
-  const [rcHomeAddr,setRcHomeAddr]=useState("");
-  const [rcRepName,setRcRepName]=useState("");
-  const [rcIncludeReturn,setRcIncludeReturn]=useState(true);
-  const [rcResults,setRcResults]=useState(null);
-  const [rcCalcing,setRcCalcing]=useState(false);
-  const [rcError,setRcError]=useState("");
   const [saving,setSaving]=useState(false);
   const [toast,setToast]=useState(null);
   const toastTimer=useRef(null);
@@ -1637,119 +1629,39 @@ function RepMapTab({allReps,markets}){
   const calcRoutes=async()=>{
     const rep=repData.find(r=>r.rep===activeRep);
     if(!rep||rep.lat==null){showToast("Locate rep address first","error");return;}
-    const filled=destInputs.map((d,i)=>({d:d.trim(),i})).filter(x=>x.d);
-    if(!filled.length){showToast("Enter at least one appointment","error");return;}
+    const active=destInputs.filter(d=>d.trim());
+    if(!active.length){showToast("Enter at least one destination","error");return;}
     setRepData(prev=>prev.map(r=>r.rep===activeRep?{...r,destinations:destInputs}:r));
     setCalcingRoutes(true);
-    const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-
-    const getSegGeo=async(fromLat,fromLng,toGeo)=>{
-      if(orsKey){
-        try{
+    const newResults={};
+    for(let i=0;i<destInputs.length;i++){
+      const dest=destInputs[i].trim();
+      if(!dest)continue;
+      newResults[i]={loading:true};
+      setRouteResults(r=>({...r,[activeRep]:{...r[activeRep],...newResults}}));
+      try{
+        const dGeo=await nominatim(dest);
+        if(!dGeo){newResults[i]={error:"Destination not found"};continue;}
+        if(orsKey){
           const res=await fetch("https://api.openrouteservice.org/v2/directions/driving-car",{
             method:"POST",headers:{"Authorization":orsKey,"Content-Type":"application/json"},
-            body:JSON.stringify({coordinates:[[fromLng,fromLat],[toGeo.lng,toGeo.lat]]})
+            body:JSON.stringify({coordinates:[[rep.lng,rep.lat],[dGeo.lng,dGeo.lat]]})
           });
           const data=await res.json();
           if(data.routes?.[0]){
             const s=data.routes[0].summary;
-            return{miles:(s.distance*0.000621371).toFixed(1),time:fmtTime(Math.round(s.duration/60))};
-          }
-        }catch(e){}
-      }
-      const dist=(haversine(fromLat,fromLng,toGeo.lat,toGeo.lng)*1.3).toFixed(1);
-      return{miles:dist+"*",time:fmtTime(Math.round(parseFloat(dist)/45*60))+"*"};
-    };
-
-    // Geocode all destinations first
-    const geos=[];
-    for(let x=0;x<filled.length;x++){
-      const g=await nominatim(filled[x].d);
-      if(!g){showToast(`Could not find: "${filled[x].d}"`,"error");setCalcingRoutes(false);return;}
-      geos.push({...g,origIdx:filled[x].i});
-      await sleep(400);
-    }
-
-    // Sequential: home→appt1→appt2→...→home (with return toggle via rcIncludeReturn)
-    const newResults={};
-    let prevLat=rep.lat,prevLng=rep.lng;
-    for(let x=0;x<geos.length;x++){
-      const seg=await getSegGeo(prevLat,prevLng,geos[x]);
-      const label=x===0?`Home → Appt 1`:`Appt ${x} → Appt ${x+1}`;
-      newResults[geos[x].origIdx]={...seg,label,sequential:true};
-      prevLat=geos[x].lat;prevLng=geos[x].lng;
-      await sleep(400);
-    }
-    // Return home leg
-    if(rcIncludeReturn&&geos.length){
-      const retSeg=await getSegGeo(prevLat,prevLng,{lat:rep.lat,lng:rep.lng});
-      newResults["return"]={...retSeg,label:`Appt ${geos.length} → Home`,sequential:true};
+            newResults[i]={miles:(s.distance*0.000621371).toFixed(1),time:fmtTime(Math.round(s.duration/60))};
+          }else{newResults[i]={error:data.error?.message||"Route not found"};}
+        }else{
+          const miles=(haversine(rep.lat,rep.lng,dGeo.lat,dGeo.lng)*1.3).toFixed(1);
+          newResults[i]={miles:miles+"*",time:fmtTime(Math.round(miles/45*60))+"*"};
+        }
+        await new Promise(r=>setTimeout(r,600));
+      }catch(e){newResults[i]={error:"Network error"};}
     }
     setRouteResults(r=>({...r,[activeRep]:newResults}));
     setCalcingRoutes(false);
     showToast("Done ✓","success");
-  };
-
-  const calcRouteCheck=async()=>{
-    setRcError("");setRcResults(null);
-    if(!rcHomeAddr.trim()){setRcError("Enter the rep home address.");return;}
-    const filled=rcAppts.map(a=>a.trim()).filter(Boolean);
-    if(!filled.length){setRcError("Enter at least one appointment address.");return;}
-    setRcCalcing(true);
-    try{
-      const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-      const homeGeo=await nominatim(rcHomeAddr.trim());
-      if(!homeGeo){setRcError("Home address not found — try a more specific address.");setRcCalcing(false);return;}
-      const apptGeos=[];
-      for(let i=0;i<filled.length;i++){
-        await sleep(400);
-        const g=await nominatim(filled[i]);
-        if(!g){setRcError(`Appointment ${i+1} address not found: "${filled[i]}"`);setRcCalcing(false);return;}
-        apptGeos.push(g);
-      }
-      const getSegment=async(fromGeo,toGeo,label,type)=>{
-        if(orsKey){
-          try{
-            const res=await fetch("https://api.openrouteservice.org/v2/directions/driving-car",{
-              method:"POST",headers:{"Authorization":orsKey,"Content-Type":"application/json"},
-              body:JSON.stringify({coordinates:[[fromGeo.lng,fromGeo.lat],[toGeo.lng,toGeo.lat]]})
-            });
-            const data=await res.json();
-            if(data.routes?.[0]){
-              const s=data.routes[0].summary;
-              const miles=(s.distance*0.000621371).toFixed(1);
-              return{label,type,miles,time:fmtTime(Math.round(s.duration/60))};
-            }
-          }catch(e){}
-        }
-        // Fallback: haversine ×1.3
-        const dist=(haversine(fromGeo.lat,fromGeo.lng,toGeo.lat,toGeo.lng)*1.3).toFixed(1);
-        return{label,type,miles:dist+"*",time:fmtTime(Math.round(parseFloat(dist)/45*60))+"*"};
-      };
-
-      const segments=[];
-      // Home → Appt 1
-      segments.push(await getSegment(homeGeo,apptGeos[0],`Home → Appt 1`,"home"));
-      await sleep(400);
-      // Appt N → Appt N+1
-      for(let i=0;i<apptGeos.length-1;i++){
-        segments.push(await getSegment(apptGeos[i],apptGeos[i+1],`Appt ${i+1} → Appt ${i+2}`,"appt"));
-        await sleep(400);
-      }
-      // Return home
-      if(rcIncludeReturn){
-        segments.push(await getSegment(apptGeos[apptGeos.length-1],homeGeo,`Appt ${apptGeos.length} → Home`,"return"));
-      }
-
-      const totalMilesNum=segments.reduce((s,seg)=>s+parseFloat(seg.miles),0);
-      const hasEst=segments.some(s=>s.miles.includes("*"));
-      setRcResults({
-        segments,
-        totalMiles:totalMilesNum.toFixed(1)+(hasEst?"*":""),
-        totalTime:fmtTime(segments.reduce((s,seg)=>s+Math.round(parseFloat(seg.miles)/45*60),0))+(hasEst?"*":"")
-      });
-    }catch(e){setRcError("Error: "+e.message);}
-    setRcCalcing(false);
   };
 
   const quickRoute=async()=>{
@@ -1788,14 +1700,8 @@ function RepMapTab({allReps,markets}){
   useEffect(()=>{
     if(!activeRepData)return;
     setAddrInput(activeRepData.address||"");
-    // Support dynamic destinations (any length), default 3 slots
-    const saved=activeRepData.destinations;
-    setDestInputs(Array.isArray(saved)&&saved.length>0?saved:["","",""]);
+    setDestInputs(activeRepData.destinations?.length===3?activeRepData.destinations:["","",""]);
     setRouteResults({});
-    // Also pre-fill Route Check tab with this rep's info
-    setRcRepName(activeRepData.rep||"");
-    setRcHomeAddr(activeRepData.address||"");
-    setRcResults(null);setRcError("");
   },[activeRep]);
 
   const zoomToRep=()=>{
@@ -1819,33 +1725,17 @@ function RepMapTab({allReps,markets}){
 
   const RouteResultBlock=({repKey})=>{
     const res=routeResults[repKey]||{};
-    const hasResults=Object.keys(res).some(k=>res[k]&&!res[k].loading&&!res[k].error);
-    // Collect all result keys in order (numeric indices, then "return")
-    const numericKeys=Object.keys(res).filter(k=>k!=="return"&&destInputs[parseInt(k)]?.trim()).sort((a,b)=>parseInt(a)-parseInt(b));
-    const allKeys=[...numericKeys,...(res["return"]?["return"]:[])];
-    const totalMiles=allKeys.reduce((sum,k)=>{
-      const v=res[k];return v&&v.miles?sum+parseFloat(v.miles):sum;
-    },0);
     return(
       <div>
-        {/* Info note about sequential routing */}
-        {hasResults&&<div style={{fontSize:10,color:"#334155",marginBottom:6,background:"rgba(14,165,233,.05)",border:"1px solid rgba(14,165,233,.1)",borderRadius:5,padding:"5px 9px"}}>
-          🔗 Sequential: each leg starts where the previous ended
-        </div>}
-        {allKeys.map((k,idx)=>{
-          const r=res[k];
+        {destInputs.map((dest,i)=>{
+          if(!dest.trim())return null;
+          const r=res[i];
           if(!r)return null;
-          const dest=k==="return"?"Home":destInputs[parseInt(k)];
-          const label=r.label||(k==="return"?`Appt → Home`:dest);
-          const isReturn=k==="return";
           return(
-            <div key={k} style={{background:"#080c14",border,borderRadius:7,marginTop:8,overflow:"hidden"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 11px",
-                background:isReturn?"rgba(16,185,129,.06)":"rgba(52,211,153,.04)",borderBottom:border}}>
-                <span style={{fontSize:11,color:isReturn?"#4ade80":"#34d399",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                  {isReturn?"🏡":"📍"} {label}
-                </span>
-                <span style={{fontSize:10,color:"#334155",marginLeft:8,flexShrink:0}}>#{idx+1}</span>
+            <div key={i} style={{background:"#080c14",border,borderRadius:7,marginTop:8,overflow:"hidden"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 11px",background:"rgba(52,211,153,.06)",borderBottom:border}}>
+                <span style={{fontSize:11,color:"#34d399",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{dest}</span>
+                <span style={{fontSize:10,color:"#334155",marginLeft:8,flexShrink:0}}>#{i+1}</span>
               </div>
               {r.loading?(
                 <div style={{padding:"10px 12px",fontSize:11,color:"#64748b",display:"flex",alignItems:"center",gap:8}}>
@@ -1868,19 +1758,7 @@ function RepMapTab({allReps,markets}){
             </div>
           );
         })}
-        {/* Total */}
-        {hasResults&&totalMiles>0&&(
-          <div style={{background:"#080c14",border:"1px solid #1e3a5f",borderRadius:7,marginTop:8,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{fontSize:10,color:"#64748b",fontWeight:700,letterSpacing:".05em"}}>TOTAL DRIVE</span>
-            <div style={{display:"flex",gap:20}}>
-              <div style={{textAlign:"right"}}>
-                <div style={{fontSize:18,fontWeight:800,color:"#22d3ee"}}>{totalMiles.toFixed(1)}{Object.values(res).some(r=>r?.miles?.includes("*"))?"*":""}</div>
-                <div style={{fontSize:9,color:"#64748b"}}>miles</div>
-              </div>
-            </div>
-          </div>
-        )}
-        {!orsKey&&hasResults&&(
+        {!orsKey&&Object.keys(res).some(k=>res[k]&&!res[k].loading&&!res[k].error)&&(
           <div style={{fontSize:10,color:"#334155",marginTop:6}}>* Straight-line ×1.3 estimate. Add ORS key in Settings for accurate routing.</div>
         )}
       </div>
@@ -2009,44 +1887,19 @@ function RepMapTab({allReps,markets}){
                 )}
               </div>
 
-              {/* Destinations — sequential appointment routing */}
+              {/* Destinations */}
               <div style={{marginBottom:12}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                  <div style={sectionLbl}>Appointments (in order)</div>
-                </div>
-                <div style={{fontSize:10,color:"#334155",marginBottom:8,padding:"5px 8px",background:"rgba(14,165,233,.05)",border:"1px solid rgba(14,165,233,.1)",borderRadius:5}}>
-                  🔗 Home → Appt 1 → Appt 2 → … (sequential)
-                </div>
+                <div style={sectionLbl}>Drive Distance Check — up to 3 destinations</div>
                 {destInputs.map((d,i)=>(
                   <div key={i} style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
-                    <div style={{width:20,height:20,borderRadius:"50%",background:d?"#0ea5e9":"#1e2a3a",
-                      display:"flex",alignItems:"center",justifyContent:"center",
-                      fontSize:10,fontWeight:700,color:d?"#fff":"#334155",flexShrink:0}}>{i+1}</div>
+                    <span style={{fontSize:10,color:"#334155",width:14,flexShrink:0,fontFamily:"monospace"}}>{i+1}</span>
                     <input value={d} onChange={e=>setDestInputs(prev=>prev.map((v,j)=>j===i?e.target.value:v))}
                       onKeyDown={e=>e.key==="Enter"&&calcRoutes()}
-                      placeholder={`Appt ${i+1} address`} style={{...inp,flex:1}}/>
-                    {destInputs.length>1&&(
-                      <button onClick={()=>setDestInputs(prev=>prev.filter((_,j)=>j!==i))}
-                        style={{background:"none",border:"none",color:"#334155",fontSize:16,cursor:"pointer",padding:"0 2px",lineHeight:1,flexShrink:0}}>×</button>
-                    )}
+                      placeholder="City or address in Florida" style={inp}/>
                   </div>
                 ))}
-                <button onClick={()=>setDestInputs(prev=>[...prev,""])}
-                  style={{...btn(false),width:"100%",marginTop:2,fontSize:11,padding:"6px",borderStyle:"dashed"}}>
-                  + Add Appointment
-                </button>
-                {/* Return home toggle */}
-                <div style={{display:"flex",alignItems:"center",gap:10,marginTop:10,paddingTop:10,borderTop:border}}>
-                  <div onClick={()=>setRcIncludeReturn(v=>!v)}
-                    style={{width:36,height:20,borderRadius:10,background:rcIncludeReturn?"#0ea5e9":"#1e2a3a",
-                      border:"1px solid #1e2a3a",cursor:"pointer",position:"relative",transition:"background .2s",flexShrink:0}}>
-                    <div style={{position:"absolute",width:14,height:14,borderRadius:"50%",background:"#fff",
-                      top:2,left:rcIncludeReturn?19:2,transition:"left .2s"}}/>
-                  </div>
-                  <span style={{fontSize:10,color:"#64748b"}}>Include drive home after last appt</span>
-                </div>
-                <button onClick={calcRoutes} disabled={calcingRoutes} style={{...btn(true),width:"100%",marginTop:10}}>
-                  {calcingRoutes?"Calculating…":"Calculate Route"}
+                <button onClick={calcRoutes} disabled={calcingRoutes} style={{...btn(true),width:"100%",marginTop:6}}>
+                  {calcingRoutes?"Calculating…":"Calculate Drives"}
                 </button>
               </div>
 
@@ -2061,111 +1914,34 @@ function RepMapTab({allReps,markets}){
           {/* ── ROUTE CHECK PANEL ── */}
           {panel==="route"&&(
             <div>
-              <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9",marginBottom:4}}>Route Check</div>
-              <div style={{fontSize:11,color:"#64748b",marginBottom:14,lineHeight:1.6}}>
-                Enter appointments in order. Distances calculate stop-to-stop: Home → Appt 1 → Appt 2 → …
-              </div>
-
-              {/* Rep name */}
+              <div style={{fontWeight:700,fontSize:13,color:"#f1f5f9",marginBottom:14}}>Quick Route Check</div>
               <div style={{marginBottom:10}}>
-                <div style={sectionLbl}>Rep Name</div>
-                <input value={rcRepName} onChange={e=>setRcRepName(e.target.value)}
-                  placeholder="e.g. Snowden, Starr" style={inp}/>
+                <div style={sectionLbl}>From</div>
+                <input value={qFrom} onChange={e=>setQFrom(e.target.value)} placeholder="City or address" style={inp}/>
               </div>
-
-              {/* Home address */}
-              <div style={{marginBottom:14}}>
-                <div style={sectionLbl}>Rep Home Address</div>
-                <input value={rcHomeAddr} onChange={e=>setRcHomeAddr(e.target.value)}
-                  placeholder="123 Main St, Cape Coral, FL" style={inp}/>
+              <div style={{marginBottom:12}}>
+                <div style={sectionLbl}>To</div>
+                <input value={qTo} onChange={e=>setQTo(e.target.value)} onKeyDown={e=>e.key==="Enter"&&quickRoute()} placeholder="City or address" style={inp}/>
               </div>
-
-              {/* Appointment stops */}
-              <div style={{marginBottom:10}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                  <div style={sectionLbl}>Appointments (in order)</div>
-                </div>
-                {rcAppts.map((appt,i)=>(
-                  <div key={i} style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
-                    <div style={{width:20,height:20,borderRadius:"50%",background:appt?"#0ea5e9":"#1e2a3a",
-                      display:"flex",alignItems:"center",justifyContent:"center",
-                      fontSize:10,fontWeight:700,color:appt?"#fff":"#334155",flexShrink:0}}>
-                      {i+1}
-                    </div>
-                    <input value={appt}
-                      onChange={e=>setRcAppts(prev=>prev.map((v,j)=>j===i?e.target.value:v))}
-                      placeholder={`Appt ${i+1} address`} style={{...inp,flex:1}}/>
-                    {rcAppts.length>1&&(
-                      <button onClick={()=>setRcAppts(prev=>prev.filter((_,j)=>j!==i))}
-                        style={{background:"none",border:"none",color:"#334155",fontSize:16,cursor:"pointer",padding:"0 2px",lineHeight:1,flexShrink:0}}
-                        title="Remove">×</button>
-                    )}
-                  </div>
-                ))}
-                <button onClick={()=>setRcAppts(prev=>[...prev,""])}
-                  style={{...btn(false),width:"100%",marginTop:2,fontSize:11,padding:"6px",borderStyle:"dashed"}}>
-                  + Add Appointment
-                </button>
-              </div>
-
-              {/* Return home toggle */}
-              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,padding:"10px 0",borderTop:border,borderBottom:border}}>
-                <div onClick={()=>setRcIncludeReturn(v=>!v)}
-                  style={{width:36,height:20,borderRadius:10,background:rcIncludeReturn?"#0ea5e9":"#1e2a3a",
-                    border:"1px solid #1e2a3a",cursor:"pointer",position:"relative",transition:"background .2s",flexShrink:0}}>
-                  <div style={{position:"absolute",width:14,height:14,borderRadius:"50%",background:"#fff",
-                    top:2,left:rcIncludeReturn?19:2,transition:"left .2s"}}/>
-                </div>
-                <span style={{fontSize:11,color:"#94a3b8"}}>Include drive home after last appointment</span>
-              </div>
-
-              {rcError&&<div style={{background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.2)",borderRadius:6,color:"#ef4444",fontSize:11,padding:"8px 12px",marginBottom:10}}>⚠ {rcError}</div>}
-
-              <button onClick={calcRouteCheck} disabled={rcCalcing} style={{...btn(true),width:"100%"}}>
-                {rcCalcing?"Calculating…":"Calculate Route"}
+              <button onClick={quickRoute} disabled={qLoading} style={{...btn(true),width:"100%"}}>
+                {qLoading?"Calculating…":"Calculate"}
               </button>
-
-              {/* Results */}
-              {rcResults&&(
-                <div style={{marginTop:14}}>
-                  {rcResults.segments.map((seg,i)=>(
-                    <div key={i} style={{background:"#080c14",border,borderRadius:8,marginBottom:8,overflow:"hidden",animation:"fadeIn .3s ease both",animationDelay:`${i*0.06}s`}}>
-                      <div style={{padding:"7px 12px",background:seg.type==="home"?"rgba(14,165,233,.08)":seg.type==="return"?"rgba(16,185,129,.08)":"rgba(52,211,153,.04)",
-                        borderBottom:border,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                        <span style={{fontSize:10,color:seg.type==="home"?"#38bdf8":seg.type==="return"?"#4ade80":"#34d399",fontWeight:600,letterSpacing:".04em"}}>
-                          {seg.type==="home"?"🏠":seg.type==="return"?"🏡":"📍"} {seg.label}
-                        </span>
-                        {!orsKey&&<span style={{fontSize:9,color:"#334155"}}>~est</span>}
+              {qResult&&(
+                <div style={{background:"#080c14",border,borderRadius:8,marginTop:14,overflow:"hidden"}}>
+                  {qResult.error?(
+                    <div style={{padding:"12px 14px",fontSize:12,color:"#ef4444"}}>⚠ {qResult.error}</div>
+                  ):(
+                    <>
+                      <div style={{padding:"8px 12px",background:"rgba(52,211,153,.06)",borderBottom:border,fontSize:11,color:"#34d399",fontWeight:600}}>
+                        {qResult.from} → {qResult.to}
                       </div>
-                      <div style={{display:"flex",gap:20,padding:"10px 14px"}}>
-                        <div>
-                          <div style={{fontSize:20,fontWeight:800,color:"#f1f5f9",lineHeight:1}}>{seg.miles}</div>
-                          <div style={{fontSize:9,color:"#64748b",marginTop:2}}>miles</div>
-                        </div>
-                        <div>
-                          <div style={{fontSize:20,fontWeight:800,color:"#f1f5f9",lineHeight:1}}>{seg.time}</div>
-                          <div style={{fontSize:9,color:"#64748b",marginTop:2}}>drive time</div>
-                        </div>
+                      <div style={{display:"flex",gap:24,padding:"12px 16px"}}>
+                        <div><div style={{fontSize:22,fontWeight:800,color:"#f1f5f9"}}>{qResult.miles}</div><div style={{fontSize:10,color:"#64748b"}}>miles</div></div>
+                        <div><div style={{fontSize:22,fontWeight:800,color:"#f1f5f9"}}>{qResult.time}</div><div style={{fontSize:10,color:"#64748b"}}>drive time</div></div>
                       </div>
-                    </div>
-                  ))}
-                  {/* Totals */}
-                  <div style={{background:"#080c14",border:"1px solid #1e3a5f",borderRadius:8,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4}}>
-                    <span style={{fontSize:11,color:"#64748b",fontWeight:700,letterSpacing:".05em"}}>
-                      TOTAL{rcRepName?` — ${rcRepName}`:""}
-                    </span>
-                    <div style={{display:"flex",gap:20}}>
-                      <div style={{textAlign:"right"}}>
-                        <div style={{fontSize:22,fontWeight:800,color:"#22d3ee"}}>{rcResults.totalMiles}</div>
-                        <div style={{fontSize:9,color:"#64748b"}}>total miles</div>
-                      </div>
-                      <div style={{textAlign:"right"}}>
-                        <div style={{fontSize:22,fontWeight:800,color:"#22d3ee"}}>{rcResults.totalTime}</div>
-                        <div style={{fontSize:9,color:"#64748b"}}>total drive</div>
-                      </div>
-                    </div>
-                  </div>
-                  {!orsKey&&<div style={{fontSize:10,color:"#334155",marginTop:8}}>* Straight-line ×1.3 estimates. Add ORS key in Settings for real road routing.</div>}
+                      {qResult.est&&<div style={{padding:"0 14px 10px",fontSize:10,color:"#334155"}}>* Estimated — add ORS key in Settings for accurate routing.</div>}
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -2210,707 +1986,476 @@ function RepMapTab({allReps,markets}){
   );
 }
 
-// ─── DISPATCH TAB ────────────────────────────────────────────────────────────
-const ISSUE_TYPES=["Cancel","NOH","No Dispo","Same-Day","Bad Dispo","Gate Code","One-Legged","Roof Report","Schedule Update","FICO","LP Update","Other"];
-const DISPATCHERS=["RJ","BR","JF"];
-const APPT_TIMES=["10AM","2PM","6PM","N/A"];
-const BUCKETS=[
-  {key:"repNotif",   label:"Rep Notif",    color:"#f59e0b"},
-  {key:"repHome",    label:"Rep@Home",     color:"#38bdf8"},
-  {key:"hoFollowup", label:"HO Follow-Up", color:"#4ade80"},
-  {key:"lpUpdate",   label:"LP Update",    color:"#a78bfa"},
-  {key:"scheduling", label:"Scheduling",   color:"#f97316"},
+// ─── TRACKER TAB ─────────────────────────────────────────────────────────────
+const DISPATCHERS=[
+  {id:"RJ",name:"RJ",color:"#38bdf8",bg:"rgba(56,189,248,.12)"},
+  {id:"BR",name:"BR",color:"#4ade80",bg:"rgba(74,222,128,.12)"},
+  {id:"JF",name:"JF",color:"#f59e0b",bg:"rgba(245,158,11,.12)"},
 ];
-const CHECKLISTS={
-  "Cancel":          ["Notify primary rep via text","Notify backup/secondary rep","Update LP","Post to 3CX Cancels channel","Attempt reschedule via Hatch","Assign same-day replacement","Confirm replacement rep notified"],
-  "NOH":             ["Call homeowner","Text homeowner","Send Hatch message","Update LP — NOH disposition","Notify rep of outcome","Flag for reschedule if no contact",""],
-  "No Dispo":        ["Send 1st text to rep","Send 2nd text to rep","Text manager + Ed (no response)","Log in No Dispo tracker","Force-dispo in LP if no response by 10AM","",""],
-  "Same-Day":        ["Check rep availability","Check drive distance (Rep Map)","Issue lead via ThinkOptimizer","Notify rep via text","Confirm rep acknowledgement","",""],
-  "Bad Dispo":       ["Call homeowner","Attempt re-engagement (script)","Notify rep — back in or confirmed dead","Update LP","","",""],
-  "Gate Code":       ["Get gate code from homeowner/Hatch","Text code to rep","Confirm rep received","Note in LP rep notes","","",""],
-  "One-Legged":      ["Confirm which spouse present","Attempt to reach missing spouse","Advise rep how to proceed","Update LP notes","Flag for potential reschedule","",""],
-  "Roof Report":     ["Copy address into Squares4Sales","Pull base measurement + waste %","Copy base, 10%, 15% into LP rep notes","Confirm rep received report","","",""],
-  "Schedule Update": ["Update availability sheet","Post in Team Reece Chat","Post in Confirmations chat","Post in Rehash chat","","",""],
-  "FICO":            ["Pull FICO via Equifax","Log result in LP","Notify rep of FICO result","Flag if FICO disqualifies lead","","",""],
-  "LP Update":       ["Log disposition","Change appointment status","Update rep notes","Update appt rank","Add reset date (if applicable)","Log FICO result (if applicable)",""],
-  "Other":           ["Document action taken","Follow up as needed","","","","",""],
-};
+const INTERACTION_TYPES=["Dispatch","Setting","Confirming","Other"];
+const DISPATCH_SUBTYPES=["1 Leg","No Home","No Demo","Schedule Change","Miscellaneous"];
+const URGENT_MS=5*60*1000;
 
-const BUCKET_CHECKLISTS={
-  repNotif:   ["Notify primary rep via text","Notify backup/secondary rep","Confirm rep acknowledged","Update LP","Post to 3CX Cancels channel","Assign same-day replacement","Confirm replacement rep notified"],
-  repHome:    ["Call homeowner","Text/Hatch message sent","Rep notified of outcome","Update LP with result","Flag for reschedule if unresolved","Gate code / access confirmed","Manager looped in (if escalated)"],
-  hoFollowup: ["Call homeowner","Text homeowner","Hatch message sent","Reschedule confirmed","PACE contact completed","Update LP with contact attempt","Escalate if no contact after 3 attempts"],
-  lpUpdate:   ["Log disposition","Change appointment status","Update rep notes","Update appt rank","Add reset date","Log FICO result","Correct promoter / source"],
-  scheduling: ["Check rep availability","Check drive distance (Rep Map)","Issue lead via ThinkOptimizer","Notify rep via text","Confirm rep acknowledgement","Update availability sheet","Post updated availability in chats"],
-};
-
-const SCRIPTS=[
-  {section:"LEAD ACKNOWLEDGEMENTS"},
-  {label:"10AM Ack",    text:"Good morning, we have added a new 10AM, just need you to acknowledge please."},
-  {label:"2PM Ack",     text:"Good afternoon, we have added a new 2PM, just need you to acknowledge please."},
-  {label:"6PM Ack",     text:"Good evening, we have added a new 6PM for you, just need you to acknowledge please."},
-  {section:"DISPO REQUEST — SAME DAY"},
-  {label:"10AM (AM)",   text:"Good morning, just need you to dispo your 10AM please."},
-  {label:"10AM (PM)",   text:"Good afternoon, just need you to dispo your 10AM please."},
-  {label:"2PM",         text:"Good afternoon, just need you to dispo the 2PM please."},
-  {label:"6PM",         text:"Good evening, just need you to dispo the 6PM please."},
-  {section:"DISPO REQUEST — PREVIOUS DAY"},
-  {label:"Prev 10AM",   text:"Good morning, just need you to dispo your 10AM from yesterday please."},
-  {label:"Prev 2PM",    text:"Good morning, just need you to dispo your 2PM from yesterday please."},
-  {label:"Prev 6PM",    text:"Good morning, just need you to dispo your 6PM from yesterday please."},
-  {section:"NO DISPO — ESCALATION"},
-  {label:"Force Rule",  text:"If rep does not respond to calls or text by 10AM: result as a Demo, notes = 'Dispo not received'"},
-  {section:"CANCEL — NOTIFY REP"},
-  {label:"Cancel→Rep",  text:"Hi [Rep Name], heads up — your [TIME] appointment at [Address] has cancelled. We are working on a replacement."},
-  {label:"SD→Backup",   text:"Hi [Backup Rep], a same-day has opened up at [Address] for [Time] — available to take it?"},
-];
-
-// ─── DISPATCH MODULE-LEVEL COMPONENTS (outside DispatchTab to prevent remounting) ─
-const DS={
-  pill:(color,active)=>({
-    padding:"5px 12px",borderRadius:20,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",
-    border:`1.5px solid ${active?color:color+"44"}`,
-    background:active?color+"22":"transparent",
-    color:active?color:"#64748b",transition:"all .15s",
-  }),
-  btn:(accent,sm)=>({
-    background:`linear-gradient(135deg,${accent},${accent}cc)`,border:"none",borderRadius:6,
-    padding:sm?"5px 12px":"8px 18px",color:"#000",fontWeight:700,
-    fontSize:sm?11:12,cursor:"pointer",fontFamily:"inherit",
-  }),
-  ghost:(color)=>({
-    background:"transparent",border:`1px solid ${color}44`,borderRadius:6,
-    padding:"5px 10px",color,fontSize:11,cursor:"pointer",fontFamily:"inherit",fontWeight:600,
-  }),
-  inp:{background:"#111827",border:"1px solid #1e2a3a",borderRadius:6,padding:"8px 12px",
-    color:"#e2e8f0",fontSize:13,fontFamily:"inherit",outline:"none",width:"100%"},
-  label:{fontSize:10,color:"#64748b",letterSpacing:".07em",marginBottom:5,display:"block"},
-  sec:{fontSize:10,color:"#334155",letterSpacing:".08em",fontWeight:700,marginBottom:8,marginTop:16},
-  card:{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:10,padding:14,marginBottom:10},
-};
-const dFmtTs=ts=>{
-  if(!ts)return"—";
-  const d=new Date(ts);
-  return`${d.getMonth()+1}/${d.getDate()} ${d.getHours()%12||12}:${String(d.getMinutes()).padStart(2,"0")}${d.getHours()<12?"AM":"PM"}`;
-};
-const dAgeHrs=ts=>ts?(Date.now()-new Date(ts).getTime())/3600000:0;
-const dIsOverdue=item=>item.status==="open"&&dAgeHrs(item.createdAt)>=2;
-
-function DIssueChip({type,active,onClick}){
-  return(
-    <button onClick={onClick} style={{
-      padding:"6px 11px",borderRadius:6,fontSize:11,fontWeight:active?700:400,cursor:"pointer",fontFamily:"inherit",
-      border:`1.5px solid ${active?"#38bdf8":"#1e2a3a"}`,
-      background:active?"rgba(56,189,248,.12)":"#080c14",
-      color:active?"#38bdf8":"#64748b",transition:"all .12s",
-    }}>{type}</button>
-  );
+function useNow(){
+  const [now,setNow]=useState(Date.now());
+  useEffect(()=>{const iv=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(iv);},[]);
+  return now;
 }
-function DBucketChip({label,color,active,onClick}){
-  return <button onClick={onClick} style={DS.pill(color,active)}>{label}</button>;
+
+function fmtElapsed(ms){
+  const s=Math.floor(ms/1000);
+  const m=Math.floor(s/60),sec=s%60;
+  if(m>=60){const h=Math.floor(m/60),rm=m%60;return`${h}h ${rm}m`;}
+  return`${m}m ${sec}s`;
 }
-function DDispBtn({d,active,onClick}){
-  return(
-    <button onClick={onClick} style={{
-      padding:"7px 16px",borderRadius:6,fontSize:12,fontWeight:active?700:400,cursor:"pointer",fontFamily:"inherit",
-      border:`1.5px solid ${active?"#6366f1":"#1e2a3a"}`,
-      background:active?"rgba(99,102,241,.15)":"#080c14",
-      color:active?"#a78bfa":"#64748b",
-    }}>{d}</button>
-  );
-}
-function DItemCard({item,detailId,setDetailId,toggleCheck,closeItem,reopenItem,deleteItem}){
-  const overdue=dIsOverdue(item);
-  const checkEntries=Object.entries(item.checklist||{});
-  const done=checkEntries.filter(([,c])=>c.done).length;
-  const total=checkEntries.length;
-  const pct=total?Math.round((done/total)*100):0;
-  const isOpen=detailId===item.id;
-  return(
-    <div style={{
-      background:overdue?"rgba(239,68,68,.05)":"#080c14",
-      border:`1px solid ${overdue?"rgba(239,68,68,.3)":item.status==="closed"?"#0a2d0a":"#1e2a3a"}`,
-      borderRadius:8,marginBottom:6,overflow:"hidden",animation:"fadeIn .15s ease",
-    }}>
-      <div onClick={()=>setDetailId(isOpen?null:item.id)}
-        style={{padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:10}}>
-        <div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,
-          background:item.status==="closed"?"#4ade80":overdue?"#ef4444":"#38bdf8"}}/>
-        <div style={{flex:1,minWidth:0}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-            <span style={{fontWeight:700,fontSize:13,color:"#f1f5f9",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:180}}>
-              {item.repName||"No rep"}
-            </span>
-            <span style={{fontSize:11,background:"#1e2a3a",color:"#38bdf8",padding:"1px 7px",borderRadius:4,fontWeight:600,flexShrink:0}}>
-              {item.issueType}
-            </span>
-            {item.apptTime&&item.apptTime!=="N/A"&&(
-              <span style={{fontSize:10,color:"#64748b",flexShrink:0}}>{item.apptTime}</span>
-            )}
-            {overdue&&<span style={{fontSize:10,color:"#ef4444",fontWeight:700,flexShrink:0}}>⚠ OVERDUE</span>}
-            {item.status==="closed"&&<span style={{fontSize:10,color:"#4ade80",flexShrink:0}}>✅ CLOSED</span>}
-          </div>
-          <div style={{display:"flex",gap:8,marginTop:3,alignItems:"center",flexWrap:"wrap"}}>
-            <span style={{fontSize:10,color:"#334155"}}>{dFmtTs(item.createdAt)}</span>
-            <span style={{fontSize:10,color:"#6366f1",fontWeight:600}}>{item.dispatcher}</span>
-            {item.notes&&<span style={{fontSize:10,color:"#475569",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:200}}>{item.notes}</span>}
-          </div>
-        </div>
-        {total>0&&(
-          <div style={{textAlign:"right",flexShrink:0}}>
-            <div style={{fontSize:11,color:pct===100?"#4ade80":"#64748b",fontWeight:700}}>{done}/{total}</div>
-            <div style={{width:48,height:4,background:"#1e2a3a",borderRadius:2,marginTop:3}}>
-              <div style={{height:"100%",width:`${pct}%`,background:pct===100?"#4ade80":"#38bdf8",borderRadius:2,transition:"width .3s"}}/>
-            </div>
-          </div>
-        )}
-        <span style={{fontSize:10,color:"#334155",flexShrink:0}}>{isOpen?"▲":"▼"}</span>
-      </div>
-      {isOpen&&(
-        <div style={{borderTop:"1px solid #1e2a3a",padding:"12px 14px",animation:"slideIn .15s ease"}}>
-          {checkEntries.length>0&&(
-            <div style={{marginBottom:12}}>
-              <div style={DS.sec}>CHECKLIST</div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:5}}>
-                {checkEntries.map(([key,c])=>(
-                  <div key={key} onClick={()=>item.status!=="closed"&&toggleCheck(item.id,key)}
-                    style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",
-                      background:c.done?"rgba(74,222,128,.06)":"#0a0f1a",borderRadius:6,
-                      cursor:item.status!=="closed"?"pointer":"default",
-                      border:`1px solid ${c.done?"rgba(74,222,128,.2)":"#1e2a3a"}`,
-                    }}>
-                    <div style={{width:16,height:16,borderRadius:3,flexShrink:0,
-                      background:c.done?"#4ade80":"transparent",
-                      border:`2px solid ${c.done?"#4ade80":"#334155"}`,
-                      display:"flex",alignItems:"center",justifyContent:"center",
-                      fontSize:10,color:"#000",transition:"all .12s",
-                    }}>{c.done?"✓":""}</div>
-                    <span style={{fontSize:11,color:c.done?"#4ade80":"#94a3b8",
-                      textDecoration:c.done?"line-through":"none"}}>{c.label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {Object.entries(item.buckets).filter(([,v])=>v).length>0&&(
-            <div style={{marginBottom:10}}>
-              <div style={DS.sec}>BUCKETS</div>
-              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                {BUCKETS.filter(b=>item.buckets[b.key]).map(b=>(
-                  <span key={b.key} style={{fontSize:10,fontWeight:700,color:b.color,
-                    background:b.color+"18",padding:"3px 9px",borderRadius:4,border:`1px solid ${b.color}44`}}>
-                    {b.label}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
-            {item.leadId&&<span style={{fontSize:10,color:"#64748b"}}>Lead ID: <strong style={{color:"#94a3b8"}}>{item.leadId}</strong></span>}
-            {item.notes&&<span style={{fontSize:10,color:"#64748b"}}>Notes: <strong style={{color:"#94a3b8"}}>{item.notes}</strong></span>}
-            {item.closedAt&&<span style={{fontSize:10,color:"#4ade80"}}>Closed: {dFmtTs(item.closedAt)}</span>}
-          </div>
-          <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-            {item.status==="open"&&(
-              <button onClick={()=>closeItem(item.id)} style={DS.btn("#4ade80",true)}>✓ Close</button>
-            )}
-            {item.status==="closed"&&(
-              <button onClick={()=>reopenItem(item.id)} style={DS.ghost("#f59e0b")}>↩ Reopen</button>
-            )}
-            <button onClick={()=>deleteItem(item.id)} style={DS.ghost("#ef4444")}>🗑 Delete</button>
-          </div>
-        </div>
-      )}
+
+function ConfirmingForm({onSubmit,showSetter}){
+  const [form,setForm]=useState({
+    setter:"",apptDate:"Today",apptTime:"9AM",phone:"",address:"",
+    homeType:"SFH",residenceType:"Primary Residence",windows:"",doors:"",
+    sliders:"",originalWindows:"Yes",mainStructure:"Yes",noResize:"Yes",
+    maritalStatus:"Single",gateCode:"",notes:""
+  });
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const inp={background:"#080c14",border:"1px solid #1e2a3a",borderRadius:6,padding:"7px 10px",
+    color:"#e2e8f0",fontSize:12,fontFamily:"inherit",outline:"none",width:"100%"};
+  const sel={...inp,cursor:"pointer"};
+  const lbl={fontSize:10,color:"#64748b",letterSpacing:".06em",textTransform:"uppercase",marginBottom:3,display:"block"};
+  const field=(label,key,el)=>(
+    <div style={{marginBottom:10}}>
+      <span style={lbl}>{label}</span>
+      {el(key)}
     </div>
   );
-}
-function DListView({title,color,list,detailId,setDetailId,toggleCheck,closeItem,reopenItem,deleteItem,emptyMsg}){
-  return(
-    <div style={{padding:"16px 20px"}}>
-      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
-        <span style={{fontWeight:800,fontSize:15,color}}>{title}</span>
-        <span style={{fontSize:12,color:"#334155",background:"#0d1120",border:"1px solid #1e2a3a",
-          borderRadius:20,padding:"2px 10px"}}>{list.length}</span>
-      </div>
-      {list.length===0?(
-        <div style={{textAlign:"center",padding:"48px 0",color:"#334155"}}>
-          <div style={{fontSize:32,marginBottom:8}}>✅</div>
-          <div style={{fontSize:13}}>{emptyMsg}</div>
-        </div>
-      ):list.map(item=>(
-        <DItemCard key={item.id} item={item} detailId={detailId} setDetailId={setDetailId}
-          toggleCheck={toggleCheck} closeItem={closeItem} reopenItem={reopenItem} deleteItem={deleteItem}/>
-      ))}
-    </div>
+  const textInput=(key,placeholder)=><input value={form[key]} onChange={e=>set(key,e.target.value)} placeholder={placeholder||""} style={inp}/>;
+  const dropdown=(key,opts)=>(
+    <select value={form[key]} onChange={e=>set(key,e.target.value)} style={sel}>
+      {opts.map(o=><option key={o} value={o}>{o}</option>)}
+    </select>
   );
-}
-function DBucketView({bk,bucketItems,detailId,setDetailId,toggleCheck,closeItem,reopenItem,deleteItem,setView}){
-  const b=BUCKETS.find(x=>x.key===bk);
-  if(!b)return null;
-  const list=bucketItems(bk);
   return(
-    <div style={{padding:"16px 20px"}}>
-      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
-        <button onClick={()=>setView("open")} style={DS.ghost("#64748b")}>← Back</button>
-        <span style={{fontWeight:800,fontSize:15,color:b.color}}>{b.label}</span>
-        <span style={{fontSize:12,color:"#334155",background:"#0d1120",border:"1px solid #1e2a3a",
-          borderRadius:20,padding:"2px 10px"}}>{list.length} open</span>
-      </div>
-      <div style={{marginBottom:14,padding:"10px 14px",background:"#0a0f1a",borderRadius:7,border:`1px solid ${b.color}33`}}>
-        <div style={{fontSize:10,color:b.color,letterSpacing:".07em",marginBottom:6}}>STANDARD CHECKLIST</div>
-        <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-          {(BUCKET_CHECKLISTS[bk]||[]).filter(i=>i).map((item,i)=>(
-            <span key={i} style={{fontSize:10,color:"#475569",background:"#111827",padding:"2px 7px",borderRadius:3}}>{item}</span>
-          ))}
-        </div>
-      </div>
-      {list.length===0
-        ?<div style={{textAlign:"center",padding:"32px 0",color:"#334155",fontSize:13}}>No open items in this bucket ✓</div>
-        :list.map(item=>(
-          <DItemCard key={item.id} item={item} detailId={detailId} setDetailId={setDetailId}
-            toggleCheck={toggleCheck} closeItem={closeItem} reopenItem={reopenItem} deleteItem={deleteItem}/>
-        ))
-      }
-    </div>
-  );
-}
-function DScriptsView(){
-  const [copied,setCopied]=useState(null);
-  const copy=(text,label)=>{
-    navigator.clipboard?.writeText(text).catch(()=>{});
-    setCopied(label);
-    setTimeout(()=>setCopied(null),1800);
-  };
-  return(
-    <div style={{padding:"16px 20px",maxWidth:760}}>
-      <div style={{fontWeight:800,fontSize:15,color:"#38bdf8",marginBottom:16}}>💬 Scripts — Click to copy</div>
-      {SCRIPTS.map((s,i)=>{
-        if(s.section)return(
-          <div key={i} style={{fontSize:10,color:"#334155",letterSpacing:".08em",marginTop:i>0?16:0,marginBottom:8,fontWeight:700}}>{s.section}</div>
-        );
-        const isCopied=copied===s.label;
-        return(
-          <div key={i} onClick={()=>copy(s.text,s.label)}
-            style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",
-              background:isCopied?"rgba(74,222,128,.06)":"#080c14",
-              border:`1px solid ${isCopied?"rgba(74,222,128,.3)":"#1e2a3a"}`,
-              borderRadius:7,cursor:"pointer",marginBottom:5,transition:"all .15s"}}>
-            <span style={{fontSize:9,color:"#334155",minWidth:72,flexShrink:0,marginTop:1}}>{s.label}</span>
-            <span style={{fontSize:12,color:"#94a3b8",flex:1,lineHeight:1.5}}>{s.text}</span>
-            <span style={{fontSize:10,color:isCopied?"#4ade80":"#334155",flexShrink:0,fontWeight:700}}>{isCopied?"✓ Copied":"Copy"}</span>
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        {showSetter&&field("Canvasser/Setter Name","setter",k=>textInput(k,"Name"))}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,gridColumn:showSetter?"1/3":"1/3"}}>
+          <div>
+            <span style={lbl}>Appt Date</span>
+            {dropdown("apptDate",["Today","Tomorrow","72+"])}
           </div>
-        );
-      })}
+          <div>
+            <span style={lbl}>Appt Time</span>
+            {dropdown("apptTime",["9AM","10AM","11AM","1PM","2PM","3PM","5PM","6PM","7PM"])}
+          </div>
+        </div>
+        {field("Ph#","phone",k=>textInput(k,"(000) 000-0000"))}
+        {field("Address","address",k=>textInput(k,"Street, City, FL ZIP"))}
+        <div>
+          <span style={lbl}>Home Type</span>
+          {dropdown("homeType",["SFH","TH","Condo","Villa"])}
+        </div>
+        <div>
+          <span style={lbl}>Residence Type</span>
+          {dropdown("residenceType",["Primary Residence","Investment Property"])}
+        </div>
+        {field("Window Count","windows",k=>textInput(k,"0"))}
+        {field("Door Count","doors",k=>textInput(k,"0"))}
+        {field("Slider Count","sliders",k=>textInput(k,"0"))}
+        <div>
+          <span style={lbl}>Original Windows</span>
+          {dropdown("originalWindows",["Yes","No"])}
+        </div>
+        <div>
+          <span style={lbl}>Main Structure</span>
+          {dropdown("mainStructure",["Yes","No"])}
+        </div>
+        <div>
+          <span style={lbl}>No Resize</span>
+          {dropdown("noResize",["Yes","No"])}
+        </div>
+        <div>
+          <span style={lbl}>Marital Status</span>
+          {dropdown("maritalStatus",["Single","Married","Partners","Siblings","Family/Friends"])}
+        </div>
+        {field("Gate Code","gateCode",k=>textInput(k,"If applicable"))}
+      </div>
+      <div style={{marginBottom:10}}>
+        <span style={lbl}>Notes</span>
+        <textarea value={form.notes} onChange={e=>set("notes",e.target.value)}
+          placeholder="Additional notes..."
+          style={{...inp,minHeight:60,resize:"vertical"}}/>
+      </div>
+      <button onClick={()=>onSubmit(form)} style={{
+        width:"100%",padding:"10px 0",background:"linear-gradient(135deg,#0ea5e9,#6366f1)",
+        border:"none",borderRadius:7,color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"
+      }}>Submit Log Entry</button>
     </div>
   );
 }
 
-function DispatchTab({r30Data,ytdData,repMapData}){
-  const [view,setView]=useState("intake"); // intake | open | overdue | bucket | nodispo | scripts
-  const [activeBucket,setActiveBucket]=useState(null);
-  const [items,setItems]=useState([]);
-  const [loading,setLoading]=useState(true);
-  const [saving,setSaving]=useState(false);
-  const [toast,setToast]=useState(null);
-  const toastRef=useRef();
+function TrackerTab({allReps,markets}){
+  const [dispatcher,setDispatcher]=useState(()=>localStorage.getItem("tracker_dispatcher")||null);
+  const [slide,setSlide]=useState(1); // 1=type, 2=details
+  const [interactionType,setInteractionType]=useState(null);
+  const [selectedRep,setSelectedRep]=useState("");
+  const [dispatchSubtype,setDispatchSubtype]=useState("");
+  const [otherNote,setOtherNote]=useState("");
+  const [log,setLog]=useState([]);
+  const [filterDispatcher,setFilterDispatcher]=useState("All");
+  const now=useNow();
 
-  // Form state
-  const [form,setForm]=useState({issueType:"",dispatcher:"",apptTime:"",repName:"",leadId:"",notes:"",buckets:{repNotif:false,repHome:false,hoFollowup:false,lpUpdate:false,scheduling:false}});
-  const [repSearch,setRepSearch]=useState("");
-  const [repDropOpen,setRepDropOpen]=useState(false);
-  const repInputRef=useRef();
-
-  // Detail panel
-  const [detailId,setDetailId]=useState(null);
-
-  const showToast=(msg,type="info")=>{
-    clearTimeout(toastRef.current);
-    setToast({msg,type});
-    toastRef.current=setTimeout(()=>setToast(null),2800);
-  };
-
-  // Load items from Firebase
+  // Load log from Firebase on mount + poll every 10s for real-time
   useEffect(()=>{
-    (async()=>{
-      setLoading(true);
-      const d=await db.get("dispatch");
-      setItems(d&&Array.isArray(d)?d:[]);
-      setLoading(false);
-    })();
-    const iv=setInterval(async()=>{
-      const d=await db.get("dispatch");
-      if(d&&Array.isArray(d))setItems(d);
-    },20000);
+    const load=async()=>{
+      const d=await db.get("tracker_log");
+      if(d&&Array.isArray(d))setLog(d);
+    };
+    load();
+    const iv=setInterval(load,10000);
     return()=>clearInterval(iv);
   },[]);
 
-  const save=async(updated)=>{
-    setSaving(true);
-    await db.set("dispatch",updated);
-    setSaving(false);
+  const saveLog=async(newLog)=>{
+    setLog(newLog);
+    await db.set("tracker_log",newLog.slice(-200)); // keep last 200 entries
   };
 
-  // Rep list: pull from repMapData (Rep Map tab) + r30/ytd reps
-  const allRepNames=useMemo(()=>{
-    const s=new Set();
-    (repMapData||[]).forEach(r=>r.rep&&s.add(r.rep));
-    (r30Data?.reps||[]).forEach(r=>r.rep&&r.tier!=="⛔ Excluded"&&s.add(r.rep));
-    (ytdData?.reps||[]).forEach(r=>r.rep&&r.tier!=="⛔ Excluded"&&s.add(r.rep));
-    return [...s].sort();
-  },[repMapData,r30Data,ytdData]);
-
-  const filteredReps=useMemo(()=>
-    repSearch.trim()?allRepNames.filter(r=>r.toLowerCase().includes(repSearch.toLowerCase())):allRepNames
-  ,[allRepNames,repSearch]);
-
-  const now=()=>new Date().toISOString();
-  const fmtTs=ts=>{
-    if(!ts)return"—";
-    const d=new Date(ts);
-    return`${d.getMonth()+1}/${d.getDate()} ${d.getHours()%12||12}:${String(d.getMinutes()).padStart(2,"0")}${d.getHours()<12?"AM":"PM"}`;
+  const selectDispatcher=(id)=>{
+    setDispatcher(id);
+    localStorage.setItem("tracker_dispatcher",id);
   };
-  const ageHrs=ts=>ts?(Date.now()-new Date(ts).getTime())/3600000:0;
-  const isOverdue=item=>item.status==="open"&&ageHrs(item.createdAt)>=2;
 
-  // Submit new item
-  const submit=()=>{
-    if(!form.issueType){showToast("Issue type is required","error");return;}
-    if(!form.dispatcher){showToast("Dispatcher is required","error");return;}
-    const bucketKeys=Object.entries(form.buckets).filter(([,v])=>v).map(([k])=>k);
-    const checklist={};
-    // Build checklist from issue type
-    const cl=CHECKLISTS[form.issueType]||[];
-    cl.filter(i=>i).forEach((item,idx)=>{checklist[`issue_${idx}`]={label:item,done:false};});
-    // Add bucket-specific items
-    bucketKeys.forEach(bk=>{
-      (BUCKET_CHECKLISTS[bk]||[]).filter(i=>i).forEach((item,idx)=>{
-        const key=`${bk}_${idx}`;
-        if(!Object.values(checklist).find(c=>c.label===item))
-          checklist[key]={label:item,done:false,bucket:bk};
-      });
-    });
-    const newItem={
-      id:`d_${Date.now()}`,
-      createdAt:now(),
-      issueType:form.issueType,
-      dispatcher:form.dispatcher,
-      apptTime:form.apptTime,
-      repName:form.repName,
-      leadId:form.leadId,
-      notes:form.notes,
-      buckets:form.buckets,
-      checklist,
-      status:"open",
-      closedAt:null,
+  const resetFlow=()=>{setSlide(1);setInteractionType(null);setSelectedRep("");setDispatchSubtype("");setOtherNote("");};
+
+  const activeReps=useMemo(()=>{
+    const seen=new Set();const list=[];
+    for(const r of allReps.filter(x=>x.tier!=="⛔ Excluded"&&markets[x.rep]!=="⛔ Terminated")){
+      if(!seen.has(r.rep)){seen.add(r.rep);list.push(r.rep);}
+    }
+    return list.sort();
+  },[allReps,markets]);
+
+  const submitEntry=(formData)=>{
+    const entry={
+      id:Date.now()+"_"+Math.random().toString(36).slice(2,7),
+      dispatcher,
+      type:interactionType,
+      rep:selectedRep||null,
+      subtype:dispatchSubtype||null,
+      note:otherNote||null,
+      form:formData||null,
+      timestamp:Date.now(),
+      status:"active",
+      completedAt:null,
     };
-    const updated=[newItem,...items];
-    setItems(updated);
-    save(updated);
-    setForm({issueType:"",dispatcher:"",apptTime:"",repName:"",leadId:"",notes:"",buckets:{repNotif:false,repHome:false,hoFollowup:false,lpUpdate:false,scheduling:false}});
-    setRepSearch("");
-    showToast("Logged ✓","success");
-    setView("open");
-    setDetailId(newItem.id);
+    const newLog=[entry,...log];
+    saveLog(newLog);
+    resetFlow();
   };
 
-  // Toggle checklist item
-  const toggleCheck=(itemId,checkKey)=>{
-    const updated=items.map(i=>{
-      if(i.id!==itemId)return i;
-      const cl={...i.checklist,[checkKey]:{...i.checklist[checkKey],done:!i.checklist[checkKey].done}};
-      const allDone=Object.values(cl).every(c=>c.done);
-      return{...i,checklist:cl,status:allDone?"closed":"open",closedAt:allDone?now():null};
-    });
-    setItems(updated);
-    save(updated);
+  const submitDispatch=()=>{
+    if(!selectedRep||!dispatchSubtype)return;
+    submitEntry(null);
   };
 
-  const closeItem=id=>{
-    const updated=items.map(i=>i.id===id?{...i,status:"closed",closedAt:now()}:i);
-    setItems(updated);
-    save(updated);
-    showToast("Closed ✓","success");
+  const markComplete=(id)=>{
+    const newLog=log.map(e=>e.id===id?{...e,status:"done",completedAt:Date.now()}:e);
+    saveLog(newLog);
   };
 
-  const reopenItem=id=>{
-    const updated=items.map(i=>i.id===id?{...i,status:"open",closedAt:null}:i);
-    setItems(updated);
-    save(updated);
-  };
+  const urgent=log.filter(e=>e.status==="active"&&(now-e.timestamp)>=URGENT_MS);
+  const active=log.filter(e=>e.status==="active"&&(now-e.timestamp)<URGENT_MS);
+  const done=log.filter(e=>e.status==="done");
 
-  const deleteItem=id=>{
-    if(!window.confirm("Delete this item?"))return;
-    const updated=items.filter(i=>i.id!==id);
-    setItems(updated);
-    save(updated);
-    if(detailId===id)setDetailId(null);
-  };
-
-  // Derived
-  const openItems=items.filter(i=>i.status==="open");
-  const overdueItems=openItems.filter(dIsOverdue).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
-  const todayItems=items.filter(i=>{
-    const d=new Date(i.createdAt);
-    const t=new Date();
-    return d.getDate()===t.getDate()&&d.getMonth()===t.getMonth()&&d.getFullYear()===t.getFullYear();
-  });
-  const bucketItems=bk=>openItems.filter(i=>i.buckets[bk]);
-  const detailItem=items.find(i=>i.id===detailId);
-
-  // S, components etc. now at module level as DS, DIssueChip, DBucketChip, DDispBtn, DItemCard, DListView, DBucketView, DScriptsView
-
-  // ── ITEM CARD ──
-  // ── INTAKE FORM — rendered directly, not as inner component, to prevent focus loss ──
-  const intakeInp={...DS.inp};
-  const renderIntake=()=>(
-    <div style={{maxWidth:720,margin:"0 auto",padding:"20px 16px"}}>
-      <div style={{fontWeight:800,fontSize:16,color:"#f1f5f9",marginBottom:4}}>📥 Log Interaction</div>
-      <div style={{fontSize:12,color:"#334155",marginBottom:20}}>Date/time auto-stamps on save. Only Issue Type + Dispatcher required.</div>
-
-      {/* Issue Type */}
-      <div style={{marginBottom:16}}>
-        <span style={DS.label}>ISSUE TYPE *</span>
-        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-          {ISSUE_TYPES.map(t=>(
-            <DIssueChip key={t} type={t} active={form.issueType===t} onClick={()=>setForm(f=>({...f,issueType:f.issueType===t?"":t}))}/>
-          ))}
-        </div>
-      </div>
-
-      {/* Dispatcher */}
-      <div style={{marginBottom:16}}>
-        <span style={DS.label}>DISPATCHER *</span>
-        <div style={{display:"flex",gap:8}}>
-          {DISPATCHERS.map(d=>(
-            <DDispBtn key={d} d={d} active={form.dispatcher===d} onClick={()=>setForm(f=>({...f,dispatcher:f.dispatcher===d?"":d}))}/>
-          ))}
-        </div>
-      </div>
-
-      {/* Rep + Appt Time row */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:12,marginBottom:16}}>
-        <div style={{position:"relative"}}>
-          <span style={DS.label}>REP NAME</span>
-          <input ref={repInputRef} value={repSearch}
-            onChange={e=>{setRepSearch(e.target.value);setRepDropOpen(true);setForm(f=>({...f,repName:e.target.value}));}}
-            onFocus={()=>setRepDropOpen(true)}
-            onBlur={()=>setTimeout(()=>setRepDropOpen(false),150)}
-            placeholder="Search rep..." style={intakeInp}/>
-          {repDropOpen&&filteredReps.length>0&&(
-            <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#111827",
-              border:"1px solid #1e2a3a",borderRadius:6,zIndex:50,maxHeight:180,overflowY:"auto",
-              boxShadow:"0 8px 24px rgba(0,0,0,.6)"}}>
-              {filteredReps.slice(0,20).map(r=>(
-                <div key={r}
-                  onMouseDown={e=>{e.preventDefault();setForm(f=>({...f,repName:r}));setRepSearch(r);setRepDropOpen(false);}}
-                  style={{padding:"8px 12px",cursor:"pointer",fontSize:12,color:"#e2e8f0",
-                    background:"transparent",borderBottom:"1px solid #1e2a3a"}}
-                  onMouseEnter={e=>e.currentTarget.style.background="#1e2a3a"}
-                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                  {r}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        <div>
-          <span style={DS.label}>APPT TIME</span>
-          <div style={{display:"flex",gap:6}}>
-            {APPT_TIMES.map(t=>(
-              <button key={t} onClick={()=>setForm(f=>({...f,apptTime:f.apptTime===t?"":t}))}
-                style={{padding:"8px 10px",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",
-                  border:`1.5px solid ${form.apptTime===t?"#f59e0b":"#1e2a3a"}`,
-                  background:form.apptTime===t?"rgba(245,158,11,.12)":"#080c14",
-                  color:form.apptTime===t?"#f59e0b":"#64748b"}}>
-                {t}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Lead ID + Notes */}
-      <div style={{display:"grid",gridTemplateColumns:"140px 1fr",gap:12,marginBottom:16}}>
-        <div>
-          <span style={DS.label}>LEAD ID</span>
-          <input value={form.leadId}
-            onChange={e=>{const v=e.target.value;setForm(f=>({...f,leadId:v}));}}
-            placeholder="LP #" style={intakeInp}/>
-        </div>
-        <div>
-          <span style={DS.label}>NOTES (optional)</span>
-          <input value={form.notes}
-            onChange={e=>{const v=e.target.value;setForm(f=>({...f,notes:v}));}}
-            onKeyDown={e=>e.key==="Enter"&&submit()}
-            placeholder="Type anything — e.g. 'Jennah NOH at 10AM, tried calling twice'" style={intakeInp}/>
-        </div>
-      </div>
-
-      {/* Buckets */}
-      <div style={{marginBottom:20}}>
-        <span style={DS.label}>ROUTE TO BUCKETS (check all that apply)</span>
-        <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-          {BUCKETS.map(b=>(
-            <DBucketChip key={b.key} bk={b.key} label={b.label} color={b.color}
-              active={form.buckets[b.key]}
-              onClick={()=>setForm(f=>({...f,buckets:{...f.buckets,[b.key]:!f.buckets[b.key]}}))}/>
-          ))}
-        </div>
-        {form.issueType&&(
-          <div style={{marginTop:10,padding:"8px 12px",background:"#0a0f1a",borderRadius:6,border:"1px solid #1e2a3a"}}>
-            <div style={{fontSize:10,color:"#334155",marginBottom:6}}>CHECKLIST PREVIEW — {form.issueType}</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-              {(CHECKLISTS[form.issueType]||[]).filter(i=>i).map((item,i)=>(
-                <span key={i} style={{fontSize:10,color:"#475569",background:"#111827",
-                  padding:"2px 7px",borderRadius:3,border:"1px solid #1e2a3a"}}>
-                  {item}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      <button onClick={submit} style={{
-        ...S.btn("#38bdf8"),width:"100%",padding:"12px 0",fontSize:13,
-        letterSpacing:".04em",color:"#000",
-      }}>
-        {saving?"Saving...":"📥 LOG INTERACTION"}
-      </button>
-    </div>
+  const filteredLog=[...urgent,...active,...done].filter(e=>
+    filterDispatcher==="All"||e.dispatcher===filterDispatcher
   );
 
-  // ── ITEM LIST VIEW ──
-  // ── DASHBOARD ──
-  const DashView=()=>{
-    const byType={};
-    ISSUE_TYPES.forEach(t=>{byType[t]=openItems.filter(i=>i.issueType===t).length;});
-    const byDisp={};
-    DISPATCHERS.forEach(d=>{byDisp[d]=openItems.filter(i=>i.dispatcher===d).length;});
+  const dispColor=id=>DISPATCHERS.find(d=>d.id===id)?.color??"#64748b";
+  const typeColor=t=>t==="Dispatch"?"#38bdf8":t==="Setting"?"#4ade80":t==="Confirming"?"#f59e0b":t==="Other"?"#a78bfa":"#64748b";
+
+  const LogEntry=({entry})=>{
+    const elapsed=entry.status==="done"
+      ?entry.completedAt-entry.timestamp
+      :now-entry.timestamp;
+    const isUrgent=entry.status==="active"&&elapsed>=URGENT_MS;
+    const isDone=entry.status==="done";
+    const dc=dispColor(entry.dispatcher);
+    const tc=typeColor(entry.type);
     return(
-      <div style={{padding:"16px 20px"}}>
-        <div style={{fontWeight:800,fontSize:15,color:"#4ade80",marginBottom:16}}>📊 Dashboard</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))",gap:8,marginBottom:20}}>
-          {[["Open",openItems.length,"#38bdf8"],["Overdue",overdueItems.length,"#ef4444"],
-            ["Closed Today",todayItems.filter(i=>i.status==="closed").length,"#4ade80"],
-            ["Total Today",todayItems.length,"#64748b"]].map(([l,v,c])=>(
-            <div key={l} style={{background:"#0d1120",border:"1px solid #1e2a3a",borderRadius:8,padding:"12px 14px",textAlign:"center"}}>
-              <div style={{fontSize:28,fontWeight:900,color:c,lineHeight:1}}>{v}</div>
-              <div style={{fontSize:10,color:"#64748b",marginTop:4}}>{l}</div>
-            </div>
-          ))}
+      <div style={{
+        background:isDone?"#080c14":isUrgent?"rgba(239,68,68,.06)":"#0d1120",
+        border:`1px solid ${isDone?"#1e2a3a":isUrgent?"rgba(239,68,68,.4)":"#1e2a3a"}`,
+        borderRadius:8,padding:"10px 14px",marginBottom:6,
+        opacity:isDone?.65:1,
+        transition:"all .3s"
+      }}>
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          {isUrgent&&<span style={{fontSize:10,fontWeight:800,color:"#ef4444",
+            background:"rgba(239,68,68,.15)",padding:"2px 7px",borderRadius:4,animation:"pulse 1.5s infinite"}}>
+            🚨 URGENT
+          </span>}
+          {isDone&&<span style={{fontSize:10,color:"#4ade80",fontWeight:700}}>✓ DONE</span>}
+          <span style={{fontSize:12,fontWeight:700,color:dc,background:`${dc}18`,
+            padding:"2px 8px",borderRadius:4}}>{entry.dispatcher}</span>
+          <span style={{fontSize:12,fontWeight:600,color:tc}}>{entry.type}</span>
+          {entry.rep&&<span style={{fontSize:11,color:"#94a3b8"}}>→ {entry.rep}</span>}
+          {entry.subtype&&<span style={{fontSize:11,color:"#64748b",background:"#1e2a3a",
+            padding:"1px 6px",borderRadius:3}}>{entry.subtype}</span>}
+          {entry.note&&<span style={{fontSize:11,color:"#64748b",fontStyle:"italic"}}>"{entry.note}"</span>}
+          {entry.form&&entry.type==="Confirming"&&entry.form.setter&&
+            <span style={{fontSize:10,color:"#64748b"}}>Set by: {entry.form.setter}</span>}
+          {entry.form&&(entry.type==="Setting"||entry.type==="Confirming")&&(
+            <span style={{fontSize:10,color:"#64748b"}}>
+              {entry.form.apptDate} @ {entry.form.apptTime} · {entry.form.homeType}
+            </span>
+          )}
+          <div style={{flex:1}}/>
+          <span style={{fontSize:11,color:isDone?"#4ade80":isUrgent?"#ef4444":"#64748b",fontWeight:isUrgent?700:400,fontFamily:"monospace"}}>
+            {fmtElapsed(elapsed)}{isDone?" total":""}
+          </span>
+          <span style={{fontSize:10,color:"#334155"}}>
+            {new Date(entry.timestamp).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
+          </span>
+          {!isDone&&(
+            <button onClick={()=>markComplete(entry.id)} style={{
+              background:"rgba(74,222,128,.12)",border:"1px solid rgba(74,222,128,.3)",
+              borderRadius:5,padding:"3px 10px",color:"#4ade80",cursor:"pointer",
+              fontSize:11,fontWeight:700,fontFamily:"inherit"
+            }}>✓ Done</button>
+          )}
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
-          <div style={{...DS.card}}>
-            <div style={{fontSize:10,color:"#334155",letterSpacing:".07em",marginBottom:10}}>OPEN BY ISSUE TYPE</div>
-            {Object.entries(byType).filter(([,v])=>v>0).sort(([,a],[,b])=>b-a).map(([t,v])=>(
-              <div key={t} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
-                <span style={{fontSize:12,color:"#94a3b8"}}>{t}</span>
-                <span style={{fontSize:12,fontWeight:700,color:"#38bdf8"}}>{v}</span>
-              </div>
-            ))}
-            {Object.values(byType).every(v=>v===0)&&<div style={{color:"#334155",fontSize:12}}>All clear ✓</div>}
+        {entry.form&&(entry.type==="Setting"||entry.type==="Confirming")&&(
+          <div style={{marginTop:6,display:"flex",flexWrap:"wrap",gap:8,fontSize:10,color:"#475569"}}>
+            {entry.form.phone&&<span>📞 {entry.form.phone}</span>}
+            {entry.form.address&&<span>📍 {entry.form.address}</span>}
+            {entry.form.windows&&<span>🪟 {entry.form.windows}win</span>}
+            {entry.form.doors&&<span>🚪 {entry.form.doors}dr</span>}
+            {entry.form.sliders&&<span>🔲 {entry.form.sliders}sl</span>}
+            {entry.form.maritalStatus&&<span>👥 {entry.form.maritalStatus}</span>}
+            {entry.form.gateCode&&<span>🔑 {entry.form.gateCode}</span>}
           </div>
-          <div style={{...DS.card}}>
-            <div style={{fontSize:10,color:"#334155",letterSpacing:".07em",marginBottom:10}}>OPEN BY DISPATCHER</div>
-            {DISPATCHERS.map(d=>(
-              <div key={d} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <span style={{fontSize:13,fontWeight:700,color:"#a78bfa"}}>{d}</span>
-                <span style={{fontSize:13,fontWeight:700,color:"#38bdf8"}}>{byDisp[d]}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-        {/* Bucket counts */}
-        <div style={{...DS.card}}>
-          <div style={{fontSize:10,color:"#334155",letterSpacing:".07em",marginBottom:10}}>OPEN BY BUCKET</div>
-          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-            {BUCKETS.map(b=>{
-              const cnt=bucketItems(b.key).length;
-              return(
-                <div key={b.key} onClick={()=>{setActiveBucket(b.key);setView("bucket");}}
-                  style={{flex:1,minWidth:100,background:"#080c14",borderRadius:7,padding:"10px 12px",
-                    border:`1px solid ${b.color}33`,cursor:"pointer",textAlign:"center"}}>
-                  <div style={{fontSize:22,fontWeight:900,color:b.color}}>{cnt}</div>
-                  <div style={{fontSize:10,color:b.color,marginTop:2,fontWeight:600}}>{b.label}</div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        )}
       </div>
     );
   };
 
-  // ── BUCKET VIEW ──
-  // ── SCRIPTS VIEW ──
-  // ── SUB-NAV ──
-  const subTabs=[
-    {k:"intake", label:"📥 Log"},
-    {k:"open",   label:`Open (${openItems.length})`},
-    {k:"overdue",label:`⚠ Overdue (${overdueItems.length})`,warn:overdueItems.length>0},
-    {k:"bucket", label:"Buckets"},
-    {k:"scripts",label:"Scripts"},
-  ];
+  const sel={background:"#080c14",border:"1px solid #1e2a3a",borderRadius:6,
+    padding:"7px 10px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",outline:"none"};
 
   return(
-    <div style={{minHeight:"calc(100vh - 52px)"}}>
-      {/* Toast */}
-      {toast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",
-          background:"#111827",border:`1px solid ${toast.type==="success"?"#4ade80":toast.type==="error"?"#ef4444":"#1e2a3a"}`,
-          color:toast.type==="success"?"#4ade80":toast.type==="error"?"#ef4444":"#e2e8f0",
-          borderRadius:8,padding:"9px 18px",fontSize:12,zIndex:999,
-          boxShadow:"0 4px 20px rgba(0,0,0,.5)",pointerEvents:"none"}}>
-          {toast.msg}
-        </div>
-      )}
+    <div style={{display:"grid",gridTemplateColumns:"380px 1fr",height:"calc(100vh - 52px)",overflow:"hidden"}}>
 
-      {/* Sub-nav */}
-      <div style={{background:"#0a0f1a",borderBottom:"1px solid #1e2a3a",
-        padding:"0 20px",display:"flex",alignItems:"center",gap:2,height:40,overflowX:"auto"}}>
-        {subTabs.map(({k,label,warn})=>(
-          <button key={k} onClick={()=>{
-            if(k==="bucket"){setView("bucket");if(!activeBucket)setActiveBucket("repNotif");}
-            else setView(k);
-          }} style={{
-            background:"none",border:"none",padding:"0 12px",height:40,fontFamily:"inherit",
-            color:view===k?(warn?"#ef4444":"#38bdf8"):(warn?"#f97316":"#64748b"),
-            borderBottom:view===k?`2px solid ${warn?"#ef4444":"#38bdf8"}`:"2px solid transparent",
-            cursor:"pointer",fontWeight:view===k?700:400,fontSize:12,whiteSpace:"nowrap",
-          }}>{label}</button>
-        ))}
-        {/* Bucket pills in sub-nav when on bucket view */}
-        {view==="bucket"&&(
-          <div style={{display:"flex",gap:5,marginLeft:12}}>
-            {BUCKETS.map(b=>(
-              <button key={b.key} onClick={()=>setActiveBucket(b.key)} style={{
-                padding:"3px 10px",borderRadius:12,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",
-                border:`1.5px solid ${activeBucket===b.key?b.color:b.color+"44"}`,
-                background:activeBucket===b.key?b.color+"22":"transparent",
-                color:activeBucket===b.key?b.color:"#64748b",
-              }}>{b.label} ({bucketItems(b.key).length})</button>
+      {/* LEFT PANEL — Input Flow */}
+      <div style={{background:"#0d1120",borderRight:"1px solid #1e2a3a",overflowY:"auto",padding:20}}>
+
+        {/* Dispatcher selector — always visible */}
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:10,color:"#334155",letterSpacing:".08em",marginBottom:10,textTransform:"uppercase"}}>
+            Who are you?
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            {DISPATCHERS.map(d=>(
+              <div key={d.id} onClick={()=>selectDispatcher(d.id)} style={{
+                flex:1,padding:"14px 8px",borderRadius:8,textAlign:"center",cursor:"pointer",
+                border:`2px solid ${dispatcher===d.id?d.color:"#1e2a3a"}`,
+                background:dispatcher===d.id?d.bg:"#080c14",
+                transition:"all .15s"
+              }}>
+                <div style={{fontSize:22,fontWeight:900,color:dispatcher===d.id?d.color:"#334155",lineHeight:1}}>{d.id}</div>
+              </div>
             ))}
           </div>
+        </div>
+
+        {!dispatcher&&(
+          <div style={{textAlign:"center",color:"#334155",padding:"40px 0",fontSize:13}}>
+            Select your name above to begin logging
+          </div>
         )}
-        {saving&&<span style={{marginLeft:"auto",fontSize:10,color:"#334155",flexShrink:0}}>Syncing…</span>}
+
+        {dispatcher&&(
+          <>
+            {/* Slide 1 — Interaction Type */}
+            <div style={{marginBottom:20}}>
+              <div style={{fontSize:10,color:"#334155",letterSpacing:".08em",marginBottom:10,textTransform:"uppercase"}}>
+                Interaction Type
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                {INTERACTION_TYPES.map(t=>(
+                  <div key={t} onClick={()=>{setInteractionType(t);setSlide(2);setSelectedRep("");setDispatchSubtype("");}}
+                    style={{
+                      padding:"12px 8px",borderRadius:8,textAlign:"center",cursor:"pointer",
+                      border:`1.5px solid ${interactionType===t?typeColor(t):"#1e2a3a"}`,
+                      background:interactionType===t?`${typeColor(t)}12`:"#080c14",
+                      color:interactionType===t?typeColor(t):"#64748b",
+                      fontWeight:interactionType===t?700:400,fontSize:13,
+                      transition:"all .15s"
+                    }}>{t}</div>
+                ))}
+              </div>
+            </div>
+
+            {/* Slide 2 — Details */}
+            {interactionType&&(
+              <div style={{borderTop:"1px solid #1e2a3a",paddingTop:16}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                  <div style={{fontSize:12,fontWeight:700,color:typeColor(interactionType)}}>{interactionType}</div>
+                  <button onClick={resetFlow} style={{background:"none",border:"none",color:"#334155",cursor:"pointer",fontSize:11,fontFamily:"inherit"}}>✕ Reset</button>
+                </div>
+
+                {/* DISPATCH */}
+                {interactionType==="Dispatch"&&(
+                  <div>
+                    <div style={{marginBottom:10}}>
+                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Rep</div>
+                      <select value={selectedRep} onChange={e=>setSelectedRep(e.target.value)} style={{...sel,width:"100%"}}>
+                        <option value="">— select rep —</option>
+                        {activeReps.map(r=><option key={r} value={r}>{r}</option>)}
+                      </select>
+                    </div>
+                    <div style={{marginBottom:14}}>
+                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Interaction</div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                        {DISPATCH_SUBTYPES.map(s=>(
+                          <div key={s} onClick={()=>setDispatchSubtype(s)} style={{
+                            padding:"8px 10px",borderRadius:6,cursor:"pointer",textAlign:"center",fontSize:11,
+                            border:`1.5px solid ${dispatchSubtype===s?"#38bdf8":"#1e2a3a"}`,
+                            background:dispatchSubtype===s?"rgba(56,189,248,.1)":"#080c14",
+                            color:dispatchSubtype===s?"#38bdf8":"#64748b",
+                            transition:"all .15s"
+                          }}>{s}</div>
+                        ))}
+                      </div>
+                    </div>
+                    <button onClick={submitDispatch}
+                      disabled={!selectedRep||!dispatchSubtype}
+                      style={{width:"100%",padding:"10px 0",
+                        background:(!selectedRep||!dispatchSubtype)?"#1e2a3a":"linear-gradient(135deg,#0ea5e9,#6366f1)",
+                        border:"none",borderRadius:7,color:(!selectedRep||!dispatchSubtype)?"#334155":"#fff",
+                        fontWeight:700,fontSize:13,cursor:(!selectedRep||!dispatchSubtype)?"not-allowed":"pointer",fontFamily:"inherit"
+                      }}>Log Entry</button>
+                  </div>
+                )}
+
+                {/* SETTING */}
+                {interactionType==="Setting"&&(
+                  <div>
+                    <div style={{marginBottom:12}}>
+                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Rep</div>
+                      <select value={selectedRep} onChange={e=>setSelectedRep(e.target.value)} style={{...sel,width:"100%"}}>
+                        <option value="">— select rep —</option>
+                        {activeReps.map(r=><option key={r} value={r}>{r}</option>)}
+                      </select>
+                    </div>
+                    {selectedRep&&<ConfirmingForm onSubmit={submitEntry} showSetter={false}/>}
+                  </div>
+                )}
+
+                {/* CONFIRMING */}
+                {interactionType==="Confirming"&&(
+                  <div>
+                    <div style={{marginBottom:12}}>
+                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Rep</div>
+                      <select value={selectedRep} onChange={e=>setSelectedRep(e.target.value)} style={{...sel,width:"100%"}}>
+                        <option value="">— select rep —</option>
+                        {activeReps.map(r=><option key={r} value={r}>{r}</option>)}
+                      </select>
+                    </div>
+                    {selectedRep&&<ConfirmingForm onSubmit={submitEntry} showSetter={true}/>}
+                  </div>
+                )}
+
+                {/* OTHER */}
+                {interactionType==="Other"&&(
+                  <div>
+                    <div style={{marginBottom:10}}>
+                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Rep (optional)</div>
+                      <select value={selectedRep} onChange={e=>setSelectedRep(e.target.value)} style={{...sel,width:"100%"}}>
+                        <option value="">— none —</option>
+                        {activeReps.map(r=><option key={r} value={r}>{r}</option>)}
+                      </select>
+                    </div>
+                    <div style={{marginBottom:12}}>
+                      <div style={{fontSize:10,color:"#334155",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase"}}>Note</div>
+                      <textarea value={otherNote} onChange={e=>setOtherNote(e.target.value)}
+                        placeholder="What happened?"
+                        style={{background:"#080c14",border:"1px solid #1e2a3a",borderRadius:6,
+                          padding:"8px 10px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",
+                          outline:"none",width:"100%",minHeight:80,resize:"vertical"}}/>
+                    </div>
+                    <button onClick={()=>submitEntry(null)} disabled={!otherNote.trim()}
+                      style={{width:"100%",padding:"10px 0",
+                        background:!otherNote.trim()?"#1e2a3a":"linear-gradient(135deg,#a78bfa,#6366f1)",
+                        border:"none",borderRadius:7,color:!otherNote.trim()?"#334155":"#fff",
+                        fontWeight:700,fontSize:13,cursor:!otherNote.trim()?"not-allowed":"pointer",fontFamily:"inherit"
+                      }}>Log Entry</button>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
       </div>
 
-      {/* Views */}
-      {loading?(
-        <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"50vh",gap:12,color:"#334155"}}>
-          <div style={{width:16,height:16,border:"2px solid #1e2a3a",borderTopColor:"#38bdf8",borderRadius:"50%",animation:"spin .6s linear infinite"}}/>
-          Loading dispatch data…
+      {/* RIGHT PANEL — Log */}
+      <div style={{overflowY:"auto",padding:20,background:"#080c14"}}>
+
+        {/* Urgent bucket */}
+        {urgent.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).length>0&&(
+          <div style={{marginBottom:20,background:"rgba(239,68,68,.04)",border:"1px solid rgba(239,68,68,.25)",borderRadius:10,padding:14}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+              <span style={{fontSize:13,fontWeight:800,color:"#ef4444"}}>🚨 URGENT</span>
+              <span style={{fontSize:11,color:"#ef4444",opacity:.7}}>— tasks over 5 minutes</span>
+              <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:"#ef4444",
+                background:"rgba(239,68,68,.15)",padding:"2px 8px",borderRadius:12}}>
+                {urgent.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).length}
+              </span>
+            </div>
+            {urgent.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).map(e=><LogEntry key={e.id} entry={e}/>)}
+          </div>
+        )}
+
+        {/* Filter + header */}
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,flexWrap:"wrap"}}>
+          <div style={{fontWeight:700,fontSize:13,color:"#e2e8f0",flex:1}}>
+            Activity Log
+            <span style={{marginLeft:8,fontSize:11,color:"#334155",fontWeight:400}}>
+              {log.length} entries · updates every 10s
+            </span>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            {["All","RJ","BR","JF"].map(d=>(
+              <button key={d} onClick={()=>setFilterDispatcher(d)}
+                style={{padding:"5px 12px",borderRadius:6,fontFamily:"inherit",fontSize:11,cursor:"pointer",
+                  border:`1.5px solid ${filterDispatcher===d?(dispColor(d)==="#64748b"?"#e2e8f0":dispColor(d)):"#1e2a3a"}`,
+                  background:filterDispatcher===d?"rgba(255,255,255,.05)":"transparent",
+                  color:filterDispatcher===d?(dispColor(d)==="#64748b"?"#e2e8f0":dispColor(d)):"#64748b",
+                  fontWeight:filterDispatcher===d?700:400}}>
+                {d}
+              </button>
+            ))}
+          </div>
         </div>
-      ):(
-        <>
-          {view==="intake"&&renderIntake()}
-          {view==="open"&&<DListView title="🔴 Open Items" color="#38bdf8" list={openItems} detailId={detailId} setDetailId={setDetailId} toggleCheck={toggleCheck} closeItem={closeItem} reopenItem={reopenItem} deleteItem={deleteItem} emptyMsg="No open items — all clear ✓"/>}
-          {view==="overdue"&&<DListView title="⚠ Overdue (2+ hrs)" color="#ef4444" list={overdueItems} detailId={detailId} setDetailId={setDetailId} toggleCheck={toggleCheck} closeItem={closeItem} reopenItem={reopenItem} deleteItem={deleteItem} emptyMsg="Nothing overdue ✓"/>}
-          {view==="bucket"&&activeBucket&&<DBucketView bk={activeBucket} bucketItems={bucketItems} detailId={detailId} setDetailId={setDetailId} toggleCheck={toggleCheck} closeItem={closeItem} reopenItem={reopenItem} deleteItem={deleteItem} setView={setView}/>}
-          {view==="scripts"&&<DScriptsView/>}
-        </>
-      )}
+
+        {/* Active (non-urgent) */}
+        {active.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).map(e=><LogEntry key={e.id} entry={e}/>)}
+
+        {/* Done */}
+        {done.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).length>0&&(
+          <div style={{marginTop:16}}>
+            <div style={{fontSize:10,color:"#1e2a3a",letterSpacing:".08em",textTransform:"uppercase",marginBottom:8,paddingTop:8,borderTop:"1px solid #1e2a3a"}}>
+              Completed
+            </div>
+            {done.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).map(e=><LogEntry key={e.id} entry={e}/>)}
+          </div>
+        )}
+
+        {filteredLog.length===0&&(
+          <div style={{textAlign:"center",color:"#1e2a3a",padding:"60px 0",fontSize:13}}>
+            No activity logged yet
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2931,7 +2476,6 @@ function App(){
   const [modal,setModal]=useState(false);
   const [markets,setMarkets]=useState({});   // { repName: marketName }
   const [marketList,setMarketList]=useState([]); // unique market names
-  const [repMapData,setRepMapData]=useState([]);
   const fileRef=useRef();
 
   useEffect(()=>{
@@ -2941,14 +2485,12 @@ function App(){
       const h=await db.get("history");if(h)setHistory(Array.isArray(h)?h:[]);
       const m=await db.get("markets");
       if(m){setMarkets(m.assignments||{});setMarketList(m.list||[]);}
-      const rmd=await db.get("repmap");if(rmd&&Array.isArray(rmd))setRepMapData(rmd);
     })();
     const iv=setInterval(async()=>{
       const r=await db.get("r30");if(r)setR30(r);
       const y=await db.get("ytd");if(y)setYtd(y);
       const h=await db.get("history");if(h)setHistory(Array.isArray(h)?h:[]);
       const m=await db.get("markets");if(m){setMarkets(m.assignments||{});setMarketList(m.list||[]);}
-      const rmd=await db.get("repmap");if(rmd&&Array.isArray(rmd))setRepMapData(rmd);
     },30000);
     return()=>clearInterval(iv);
   },[]);
@@ -3048,9 +2590,9 @@ function App(){
     {k:"markets",label:"🗺 MARKETS"},
     {k:"compare",label:"⚖ COMPARE"},
     {k:"repmap",label:"📍 REP MAP"},
-    {k:"dispatch",label:"📋 DISPATCH"},
+    {k:"tracker",label:"🗂 TRACKER"},
   ];
-  const navColor=k=>k==="watch"?"#f97316":k==="deep"?"#a78bfa":k==="trends"?"#4ade80":k==="markets"?"#f59e0b":k==="compare"?"#a78bfa":k==="repmap"?"#34d399":k==="dispatch"?"#f59e0b":"#38bdf8";
+  const navColor=k=>k==="watch"?"#f97316":k==="deep"?"#a78bfa":k==="trends"?"#4ade80":k==="markets"?"#f59e0b":k==="compare"?"#a78bfa":k==="repmap"?"#34d399":k==="tracker"?"#fb923c":"#38bdf8";
 
   return(
     <div style={{minHeight:"100vh",background:"#080c14",color:"#e2e8f0",fontSize:14}}>
@@ -3322,14 +2864,14 @@ function App(){
         />
       )}
 
-      {/* DISPATCH */}
-      {tab==="dispatch"&&(
-        <DispatchTab r30Data={r30} ytdData={ytd} repMapData={repMapData}/>
-      )}
-
       {/* REP MAP */}
       {tab==="repmap"&&(
         <RepMapTab allReps={(r30?.reps||ytd?.reps||[])} markets={markets}/>
+      )}
+
+      {/* TRACKER */}
+      {tab==="tracker"&&(
+        <TrackerTab allReps={(r30?.reps||ytd?.reps||[])} markets={markets}/>
       )}
 
       {/* DEEP STATS */}
