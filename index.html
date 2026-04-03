@@ -2223,24 +2223,24 @@ function DashboardTab({r30Data,ytdData,history,markets,marketList,onOpenScorecar
 
     if(topTier.length>0){
       const avgStd=topTier.reduce((a,r)=>a+r.std_pct,0)/topTier.length;
-      insights.push({icon:"🏆",type:"good",text:`${topTier.length} top-tier reps averaging ${(avgStd*100).toFixed(0)}% close rate — the ceiling is strong.`});
+      insights.push({icon:"🏆",type:"good",text:`${topTier.length} top-tier reps averaging ${(avgStd*100).toFixed(0)}% close rate — the ceiling is strong.`,reps:topTier});
     }
     if(highFallout.length>=3){
-      insights.push({icon:"⚠️",type:"warn",text:`${highFallout.length} reps have above-average fallout — closed revenue isn't all sticking.`});
+      insights.push({icon:"⚠️",type:"warn",text:`${highFallout.length} reps have above-average fallout — closed revenue isn't all sticking.`,reps:highFallout});
     }
     if(lowStick.length>=2){
-      insights.push({icon:"📉",type:"warn",text:`${lowStick.length} reps with low stick rates — closes are happening but not netting to revenue.`});
+      insights.push({icon:"📉",type:"warn",text:`${lowStick.length} reps with low stick rates — closes are happening but not netting to revenue.`,reps:lowStick});
     }
     if(hotReps.length>0){
-      insights.push({icon:"🔥",type:"good",text:`${hotReps.length} rep${hotReps.length>1?"s are":"is"} on a hot streak over the last 30 days — momentum is building.`});
+      insights.push({icon:"🔥",type:"good",text:`${hotReps.length} rep${hotReps.length>1?"s are":"is"} on a hot streak over the last 30 days — momentum is building.`,reps:hotReps});
     }
     if(coldReps.length>0){
-      insights.push({icon:"❄️",type:"caution",text:`${coldReps.length} rep${coldReps.length>1?"s are":"is"} trending down vs YTD baseline — worth a conversation.`});
+      insights.push({icon:"❄️",type:"caution",text:`${coldReps.length} rep${coldReps.length>1?"s are":"is"} trending down vs YTD baseline — worth a conversation.`,reps:coldReps});
     }
     if(marketSignals.length>=2){
       const best=marketSignals[0],worst=marketSignals[marketSignals.length-1];
       if(best.normNetVol>worst.normNetVol*1.4){
-        insights.push({icon:"🗺",type:"info",text:`${best.name} is significantly outperforming ${worst.name} per appointment — look at what's driving the gap.`});
+        insights.push({icon:"🗺",type:"info",text:`${best.name} is significantly outperforming ${worst.name} per appointment — look at what's driving the gap.`,reps:[]});
       }
     }
     return insights.slice(0,5);
@@ -2498,31 +2498,69 @@ function DashboardTab({r30Data,ytdData,history,markets,marketList,onOpenScorecar
         )}
 
         {/* SYSTEM INSIGHTS */}
-        <div style={{background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
-            <span style={{fontSize:15}}>💡</span>
-            <div>
-              <div style={{fontWeight:800,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>Team Insights</div>
-              <div style={{fontSize:10,color:"var(--text-muted)"}}>What the data means, in plain English</div>
-            </div>
-          </div>
-          {systemInsights.length===0&&<div style={{color:"var(--text-muted)",fontSize:12,padding:"10px 0"}}>Upload more data to generate team-level insights.</div>}
-          {systemInsights.map((ins,i)=>{
-            const styles={
-              good:{bg:"rgba(52,211,153,.06)",border:"rgba(52,211,153,.18)"},
-              warn:{bg:"rgba(251,191,36,.06)",border:"rgba(251,191,36,.18)"},
-              caution:{bg:"rgba(251,191,36,.05)",border:"rgba(251,191,36,.14)"},
-              info:{bg:"rgba(56,189,248,.05)",border:"rgba(56,189,248,.16)"},
-            };
-            const s=styles[ins.type]||styles.info;
-            return(
-              <div key={i} className="fade-up" style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 13px",borderRadius:"var(--radius-sm)",marginBottom:7,background:s.bg,border:`1px solid ${s.border}`,animationDelay:`${i*.08}s`}}>
-                <span style={{fontSize:15,flexShrink:0}}>{ins.icon}</span>
-                <span style={{fontSize:12,color:"var(--text-secondary)",lineHeight:1.6}}>{ins.text}</span>
+        {(()=>{
+          const [expandedInsight,setExpandedInsight]=useState(null);
+          const insightStyles={
+            good:   {accent:"#34d399",bg:"rgba(52,211,153,.05)",  border:"rgba(52,211,153,.15)",borderExp:"rgba(52,211,153,.40)"},
+            warn:   {accent:"#fbbf24",bg:"rgba(251,191,36,.05)",  border:"rgba(251,191,36,.15)",borderExp:"rgba(251,191,36,.42)"},
+            caution:{accent:"#fb923c",bg:"rgba(251,146,60,.04)",  border:"rgba(251,146,60,.13)",borderExp:"rgba(251,146,60,.35)"},
+            info:   {accent:"#38bdf8",bg:"rgba(56,189,248,.04)",  border:"rgba(56,189,248,.14)",borderExp:"rgba(56,189,248,.38)"},
+          };
+          const getRepMetric=(ins,rep)=>{
+            if(ins.icon==="⚠️"&&ins.type==="warn")return{label:"Fallout%",value:fP(rep.fallout_rate)};
+            if(ins.icon==="📉")return{label:"NetStk%",value:fP(rep.net_issue_rate)};
+            return{label:"Score",value:(rep.score??0).toFixed(4)};
+          };
+          return(
+            <div style={{background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+                <span style={{fontSize:15}}>💡</span>
+                <div>
+                  <div style={{fontWeight:800,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>Team Insights</div>
+                  <div style={{fontSize:10,color:"var(--text-muted)"}}>What the data means, in plain English</div>
+                </div>
               </div>
-            );
-          })}
-        </div>
+              {systemInsights.length===0&&<div style={{color:"var(--text-muted)",fontSize:12,padding:"10px 0"}}>Upload more data to generate team-level insights.</div>}
+              {systemInsights.map((ins,i)=>{
+                const s=insightStyles[ins.type]||insightStyles.info;
+                const isExp=expandedInsight===i;
+                const reps=ins.reps||[];
+                return(
+                  <div key={i} className="fade-up"
+                    onClick={()=>setExpandedInsight(isExp?null:i)}
+                    style={{borderRadius:"var(--radius-sm)",marginBottom:7,background:s.bg,border:`1px solid ${isExp?s.borderExp:s.border}`,borderLeft:`3px solid ${isExp?s.accent:s.border}`,animationDelay:`${i*.08}s`,cursor:"pointer",transition:"border-color .15s, border-left-color .15s"}}>
+                    <div style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 13px"}}>
+                      <span style={{fontSize:15,flexShrink:0}}>{ins.icon}</span>
+                      <span style={{fontSize:12,color:"var(--text-secondary)",lineHeight:1.6,flex:1}}>{ins.text}</span>
+                      {reps.length>0&&(
+                        <span style={{flexShrink:0,fontSize:10,fontWeight:700,color:s.accent,background:`${s.accent}14`,border:`1px solid ${s.accent}30`,borderRadius:20,padding:"2px 8px",whiteSpace:"nowrap",marginTop:1,transition:"background .15s"}}>
+                          <span style={{fontSize:9,marginRight:3}}>{isExp?"▾":"▸"}</span>{reps.length} rep{reps.length>1?"s":""}
+                        </span>
+                      )}
+                    </div>
+                    {isExp&&reps.length>0&&(
+                      <div style={{borderTop:`1px solid ${s.accent}22`,padding:"6px 13px 10px"}}>
+                        {reps.map((rep,ri)=>{
+                          const metric=getRepMetric(ins,rep);
+                          return(
+                            <div key={rep.rep} className="fade-up"
+                              onClick={e=>{e.stopPropagation();onOpenScorecard(rep.rep);}}
+                              style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 8px",borderRadius:"var(--radius-sm)",cursor:"pointer",transition:"background .12s",animationDelay:`${ri*.04}s`}}
+                              onMouseEnter={e=>e.currentTarget.style.background="var(--bg-hover)"}
+                              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                              <span style={{fontSize:12,color:"var(--text-primary)",fontWeight:500}}>{rep.rep}</span>
+                              <span style={{fontSize:11,fontFamily:"var(--font-mono)"}}><span style={{fontSize:9,color:"var(--text-faint)",marginRight:4}}>{metric.label}</span><span style={{color:s.accent,fontWeight:600}}>{metric.value}</span></span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
