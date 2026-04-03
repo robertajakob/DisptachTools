@@ -2137,9 +2137,400 @@ function TrackerTab({allReps,markets}){
   );
 }
 
+// ─── DASHBOARD TAB ───────────────────────────────────────────────────────────
+function DashboardTab({r30Data,ytdData,history,markets,marketList,onOpenScorecard}){
+
+  const activeReps=useMemo(()=>{
+    const src=r30Data||ytdData;
+    return(src?.reps||[]).filter(r=>r.tier!=="⛔ Excluded"&&markets[r]!=="⛔ Terminated");
+  },[r30Data,ytdData,markets]);
+
+  // ── derive team averages ──
+  const teamAvg=useMemo(()=>{
+    if(!activeReps.length)return{};
+    const avg=f=>activeReps.map(r=>r[f]??0).reduce((a,b)=>a+b,0)/activeReps.length;
+    return{net_vol:avg("net_vol"),std_pct:avg("std_pct"),fallout_rate:avg("fallout_rate"),net_issue_rate:avg("net_issue_rate"),avg_deal:avg("avg_deal")};
+  },[activeReps]);
+
+  // ── top performers: ranked by score, tier Elite/Strong, decent sample ──
+  const topPerformers=useMemo(()=>{
+    return [...activeReps]
+      .filter(r=>r.rank!=="-"&&r.demo>=5)
+      .sort((a,b)=>a.rank-b.rank)
+      .slice(0,5);
+  },[activeReps]);
+
+  // ── needs attention: declining trend OR high fallout OR low confidence ──
+  const needsAttention=useMemo(()=>{
+    if(!r30Data||!ytdData)return[];
+    return activeReps
+      .filter(r=>{
+        const ytdR=ytdData.reps?.find(x=>x.rep===r.rep);
+        if(!ytdR)return false;
+        const falloutHigh=r.fallout_rate>(teamAvg.fallout_rate*1.3);
+        const stdDropping=(r.std_pct-ytdR.std_pct)<-0.04;
+        const volDropping=(r.net_vol-ytdR.net_vol)<-(teamAvg.net_vol*0.15);
+        const lowSample=r.demo<8&&r.rank!=="-";
+        return falloutHigh||stdDropping||volDropping||lowSample;
+      })
+      .sort((a,b)=>b.fallout_rate-a.fallout_rate)
+      .slice(0,5);
+  },[activeReps,r30Data,ytdData,teamAvg]);
+
+  // ── momentum rows: compare r30 vs ytd ──
+  const momentumRows=useMemo(()=>{
+    if(!r30Data||!ytdData)return{heating:[],cooling:[]};
+    const rows=[];
+    for(const r30R of (r30Data.reps||[]).filter(r=>r.tier!=="⛔ Excluded"&&r.demo>=5)){
+      const ytdR=ytdData.reps?.find(x=>x.rep===r30R.rep);
+      if(!ytdR)continue;
+      let composite=0;
+      for(const m of SIGNAL_METRICS){
+        const r30v=m.key==="_gap"?gapPts(r30R):r30R[m.key];
+        const ytdv=m.key==="_gap"?gapPts(ytdR):ytdR[m.key];
+        composite+=signal(r30v,ytdv,m.higherBetter).s;
+      }
+      rows.push({rep:r30R.rep,tier:r30R.tier,composite,r30R,ytdR});
+    }
+    rows.sort((a,b)=>b.composite-a.composite);
+    return{heating:rows.slice(0,4),cooling:[...rows].reverse().slice(0,4)};
+  },[r30Data,ytdData]);
+
+  // ── market signals ──
+  const marketSignals=useMemo(()=>{
+    if(!marketList.length||!activeReps.length)return[];
+    return marketList.map(mkt=>{
+      const reps=activeReps.filter(r=>markets[r.rep]===mkt);
+      if(!reps.length)return null;
+      const sum=f=>reps.reduce((a,r)=>a+(r[f]??0),0);
+      const totalGross=sum("gross_iss");
+      const normNetVol=totalGross>0?(sum("net_vol")/totalGross)*100:0;
+      const avgScore=reps.reduce((a,r)=>a+r.score,0)/reps.length;
+      const avgFallout=sum("fallout_rate")/reps.length;
+      return{name:mkt,repCount:reps.length,normNetVol,avgScore,avgFallout,totalNetVol:sum("net_vol")};
+    }).filter(Boolean).sort((a,b)=>b.normNetVol-a.normNetVol);
+  },[activeReps,markets,marketList]);
+
+  // ── system insights ──
+  const systemInsights=useMemo(()=>{
+    if(!activeReps.length)return[];
+    const insights=[];
+    const topTier=activeReps.filter(r=>r.tier==="🥇 Elite"||r.tier==="🥈 Strong");
+    const highFallout=activeReps.filter(r=>r.fallout_rate>teamAvg.fallout_rate*1.3);
+    const lowStick=activeReps.filter(r=>r.net_issue_rate<0.6&&r.demo>=8);
+    const hotReps=momentumRows.heating.filter(r=>r.composite>=4);
+    const coldReps=momentumRows.cooling.filter(r=>r.composite<=-4);
+
+    if(topTier.length>0){
+      const avgStd=topTier.reduce((a,r)=>a+r.std_pct,0)/topTier.length;
+      insights.push({icon:"🏆",type:"good",text:`${topTier.length} top-tier reps averaging ${(avgStd*100).toFixed(0)}% close rate — the ceiling is strong.`});
+    }
+    if(highFallout.length>=3){
+      insights.push({icon:"⚠️",type:"warn",text:`${highFallout.length} reps have above-average fallout — closed revenue isn't all sticking.`});
+    }
+    if(lowStick.length>=2){
+      insights.push({icon:"📉",type:"warn",text:`${lowStick.length} reps with low stick rates — closes are happening but not netting to revenue.`});
+    }
+    if(hotReps.length>0){
+      insights.push({icon:"🔥",type:"good",text:`${hotReps.length} rep${hotReps.length>1?"s are":"is"} on a hot streak over the last 30 days — momentum is building.`});
+    }
+    if(coldReps.length>0){
+      insights.push({icon:"❄️",type:"caution",text:`${coldReps.length} rep${coldReps.length>1?"s are":"is"} trending down vs YTD baseline — worth a conversation.`});
+    }
+    if(marketSignals.length>=2){
+      const best=marketSignals[0],worst=marketSignals[marketSignals.length-1];
+      if(best.normNetVol>worst.normNetVol*1.4){
+        insights.push({icon:"🗺",type:"info",text:`${best.name} is significantly outperforming ${worst.name} per appointment — look at what's driving the gap.`});
+      }
+    }
+    return insights.slice(0,5);
+  },[activeReps,teamAvg,momentumRows,marketSignals]);
+
+  // ── rep one-liner ──
+  const repOneLiner=(r,ytdR)=>{
+    if(r.demo<8)return"Low sample — monitor before drawing conclusions";
+    if(r.tier==="🥇 Elite"&&r.net_issue_rate>=.80)return"Elite closer with clean, durable deals";
+    if(r.tier==="🥇 Elite")return"Elite volume producer — check stick rate for deal quality";
+    if(r.fallout_rate>teamAvg.fallout_rate*1.3&&r.std_pct>=.30)return"Strong closer but deals are falling through after the sale";
+    if(r.net_issue_rate<.60&&r.demo>=8)return"Closes are happening but not converting to real revenue";
+    if(ytdR&&r.std_pct-ytdR.std_pct>=.05)return"Close rate improving over last 30 days";
+    if(ytdR&&r.std_pct-ytdR.std_pct<=-0.05)return"Close rate slipping vs year-to-date baseline";
+    if(r.std_pct<.22)return"Below-floor close rate — demo conversion needs focus";
+    if(r.fallout_rate<teamAvg.fallout_rate*.7)return"Deal quality is excellent — closes are clean and stick";
+    return"Consistent performer across key metrics";
+  };
+
+  const momentumLabel=c=>{
+    if(c>=8)return{text:"🔥 On Fire",color:"#34d399"};
+    if(c>=4)return{text:"📈 Heating",color:"#86efac"};
+    if(c>=1)return{text:"↗ Rising",color:"#94a3b8"};
+    if(c===0)return{text:"➡ Stable",color:"#64748b"};
+    if(c>=-3)return{text:"↘ Softening",color:"#fb923c"};
+    return{text:"❄ Cooling",color:"#38bdf8"};
+  };
+
+  const noData=!r30Data&&!ytdData;
+  const hasTrends=!!(r30Data&&ytdData);
+
+  if(noData){
+    return(
+      <div className="empty-state" style={{height:"calc(100vh - 52px)"}}>
+        <div className="empty-icon">📊</div>
+        <div className="empty-title">No data uploaded yet</div>
+        <div className="empty-sub">Upload a Rolling 30 or YTD CSV to see your dashboard</div>
+      </div>
+    );
+  }
+
+  // ── LAYOUT ──
+  return(
+    <div style={{padding:"22px 26px",overflowY:"auto",height:"calc(100vh - 52px)",background:"var(--bg-base)"}}>
+
+      {/* ── DATE CONTEXT ── */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22}}>
+        <div>
+          <div style={{fontWeight:800,fontSize:20,color:"var(--text-primary)",fontFamily:"var(--font-display)",letterSpacing:"-.01em"}}>Performance Overview</div>
+          <div style={{fontSize:12,color:"var(--text-muted)",marginTop:3}}>
+            {(r30Data||ytdData)?.date_range&&<span style={{fontFamily:"var(--font-mono)"}}>{(r30Data||ytdData).date_range}</span>}
+            {" · "}{activeReps.length} active reps
+            {!hasTrends&&<span style={{color:"#fbbf24",marginLeft:10}}>⚠ Upload both R30 + YTD for trend data</span>}
+          </div>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          {[["net_vol",f$(Math.round(activeReps.reduce((a,r)=>a+r.net_vol,0))),"Total Net Vol","#34d399"],
+            ["std_pct",(activeReps.reduce((a,r)=>a+r.std_pct,0)/Math.max(activeReps.length,1)*100).toFixed(1)+"%","Avg Close Rate","#38bdf8"],
+          ].map(([k,v,l,c])=>(
+            <div key={k} style={{background:"var(--bg-surface)",border:`1px solid ${c}22`,borderRadius:"var(--radius)",padding:"9px 16px",textAlign:"right"}}>
+              <div style={{fontSize:10,color:"var(--text-muted)",marginBottom:2,letterSpacing:".05em"}}>{l}</div>
+              <div style={{fontSize:16,fontWeight:800,color:c,fontFamily:"var(--font-mono)"}}>{v}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── ROW 1: TOP PERFORMERS + NEEDS ATTENTION ── */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+
+        {/* TOP PERFORMERS */}
+        <div style={{background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+            <span style={{fontSize:15}}>🏆</span>
+            <div>
+              <div style={{fontWeight:800,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>Top Performers</div>
+              <div style={{fontSize:10,color:"var(--text-muted)"}}>Ranked by composite score</div>
+            </div>
+          </div>
+          {topPerformers.length===0&&<div style={{color:"var(--text-muted)",fontSize:12,padding:"20px 0",textAlign:"center"}}>Need more data (5+ demos per rep)</div>}
+          {topPerformers.map((r,i)=>{
+            const ytdR=ytdData?.reps?.find(x=>x.rep===r.rep);
+            const tc=TC[r.tier]??"#64748b";
+            const sigScore=ytdR?signal(r.score,ytdR.score,true):{s:0,icon:"➡",color:"#64748b"};
+            return(
+              <div key={r.rep} onClick={()=>onOpenScorecard(r.rep)}
+                style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:"var(--radius)",marginBottom:7,cursor:"pointer",background:"var(--bg-elevated)",border:"1px solid var(--border)",transition:"all .15s",animationDelay:`${i*.06}s`}}
+                className="fade-up"
+                onMouseEnter={e=>{e.currentTarget.style.borderColor="var(--border-strong)";e.currentTarget.style.background="var(--bg-hover)";}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border)";e.currentTarget.style.background="var(--bg-elevated)";}}>
+                <div style={{width:28,height:28,borderRadius:"50%",background:`${tc}20`,border:`1.5px solid ${tc}55`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:900,color:tc,flexShrink:0,fontFamily:"var(--font-display)"}}>
+                  {i+1}
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:13,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.rep}</div>
+                  <div style={{fontSize:10,color:"var(--text-muted)",marginTop:1,lineHeight:1.4}}>{repOneLiner(r,ytdR)}</div>
+                </div>
+                <div style={{textAlign:"right",flexShrink:0}}>
+                  <div style={{fontSize:13,color:sigScore.color,fontWeight:700}}>{sigScore.icon}</div>
+                  <div style={{fontSize:10,color:tc,fontWeight:700,fontFamily:"var(--font-mono)"}}>{(r.score*100).toFixed(0)}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* NEEDS ATTENTION */}
+        <div style={{background:"var(--bg-surface)",border:"1px solid rgba(248,113,113,.18)",borderRadius:"var(--radius-lg)",padding:18}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+            <span style={{fontSize:15}}>⚠️</span>
+            <div>
+              <div style={{fontWeight:800,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>Needs Attention</div>
+              <div style={{fontSize:10,color:"var(--text-muted)"}}>Declining trend, high fallout, or low confidence</div>
+            </div>
+          </div>
+          {needsAttention.length===0&&(
+            <div style={{color:"#34d399",fontSize:12,padding:"20px 0",textAlign:"center"}}>
+              ✓ No reps flagged right now
+            </div>
+          )}
+          {needsAttention.map((r,i)=>{
+            const ytdR=ytdData?.reps?.find(x=>x.rep===r.rep);
+            const falloutHigh=r.fallout_rate>(teamAvg.fallout_rate*1.3);
+            const stdDrop=ytdR&&(r.std_pct-ytdR.std_pct)<-0.04;
+            const lowSample=r.demo<8;
+            const flags=[];
+            if(falloutHigh)flags.push({label:"High fallout",color:"#f87171"});
+            if(stdDrop)flags.push({label:`STD% ↓${((ytdR.std_pct-r.std_pct)*100).toFixed(1)}pp`,color:"#fb923c"});
+            if(lowSample)flags.push({label:"Low sample",color:"#fbbf24"});
+            if(!falloutHigh&&!stdDrop&&!lowSample)flags.push({label:"Vol dropping",color:"#fb923c"});
+            return(
+              <div key={r.rep} onClick={()=>onOpenScorecard(r.rep)}
+                style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:"var(--radius)",marginBottom:7,cursor:"pointer",background:"rgba(248,113,113,.04)",border:"1px solid rgba(248,113,113,.12)",transition:"all .15s"}}
+                className="fade-up"
+                onMouseEnter={e=>{e.currentTarget.style.background="rgba(248,113,113,.08)";e.currentTarget.style.borderColor="rgba(248,113,113,.25)";}}
+                onMouseLeave={e=>{e.currentTarget.style.background="rgba(248,113,113,.04)";e.currentTarget.style.borderColor="rgba(248,113,113,.12)";}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:13,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.rep}</div>
+                  <div style={{fontSize:10,color:"var(--text-muted)",marginTop:2}}>{repOneLiner(r,ytdR)}</div>
+                </div>
+                <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end",flexShrink:0,maxWidth:140}}>
+                  {flags.slice(0,2).map(f=>(
+                    <span key={f.label} style={{fontSize:9,fontWeight:700,color:f.color,background:`${f.color}18`,padding:"2px 6px",borderRadius:3,border:`1px solid ${f.color}30`,whiteSpace:"nowrap"}}>{f.label}</span>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── ROW 2: MOMENTUM ── */}
+      {hasTrends&&(
+        <div style={{background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18,marginBottom:16}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+            <span style={{fontSize:15}}>📈</span>
+            <div>
+              <div style={{fontWeight:800,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>Trend Movement</div>
+              <div style={{fontSize:10,color:"var(--text-muted)"}}>R30 vs YTD baseline — who's moving and in which direction</div>
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            {/* HEATING */}
+            <div>
+              <div style={{fontSize:10,color:"#34d399",fontWeight:700,letterSpacing:".07em",textTransform:"uppercase",marginBottom:8}}>🔥 Heating Up</div>
+              {momentumRows.heating.map((r,i)=>{
+                const cl=momentumLabel(r.composite);
+                const stdDelta=r.r30R.std_pct-r.ytdR.std_pct;
+                return(
+                  <div key={r.rep} onClick={()=>onOpenScorecard(r.rep)}
+                    style={{display:"flex",alignItems:"center",gap:8,padding:"8px 11px",borderRadius:"var(--radius-sm)",marginBottom:5,cursor:"pointer",background:"var(--bg-elevated)",border:"1px solid var(--border)",transition:"all .15s"}}
+                    onMouseEnter={e=>{e.currentTarget.style.borderColor="rgba(52,211,153,.3)";}}
+                    onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border)";}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:600,fontSize:12,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.rep}</div>
+                      <div style={{fontSize:10,color:"var(--text-muted)"}}>{TC[r.tier]&&<span style={{color:TC[r.tier]}}>{r.tier}</span>}</div>
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0}}>
+                      <div style={{color:cl.color,fontWeight:700,fontSize:11}}>{cl.text}</div>
+                      {stdDelta>0.02&&<div style={{fontSize:9,color:"#34d399",fontFamily:"var(--font-mono)"}}>STD +{(stdDelta*100).toFixed(1)}pp</div>}
+                    </div>
+                  </div>
+                );
+              })}
+              {momentumRows.heating.length===0&&<div style={{fontSize:11,color:"var(--text-muted)",padding:"12px 0"}}>No reps heating up right now</div>}
+            </div>
+            {/* COOLING */}
+            <div>
+              <div style={{fontSize:10,color:"#38bdf8",fontWeight:700,letterSpacing:".07em",textTransform:"uppercase",marginBottom:8}}>❄️ Cooling Off</div>
+              {momentumRows.cooling.map((r,i)=>{
+                const cl=momentumLabel(r.composite);
+                const stdDelta=r.r30R.std_pct-r.ytdR.std_pct;
+                return(
+                  <div key={r.rep} onClick={()=>onOpenScorecard(r.rep)}
+                    style={{display:"flex",alignItems:"center",gap:8,padding:"8px 11px",borderRadius:"var(--radius-sm)",marginBottom:5,cursor:"pointer",background:"var(--bg-elevated)",border:"1px solid var(--border)",transition:"all .15s"}}
+                    onMouseEnter={e=>{e.currentTarget.style.borderColor="rgba(56,189,248,.3)";}}
+                    onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border)";}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:600,fontSize:12,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.rep}</div>
+                      <div style={{fontSize:10,color:"var(--text-muted)"}}>{TC[r.tier]&&<span style={{color:TC[r.tier]}}>{r.tier}</span>}</div>
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0}}>
+                      <div style={{color:cl.color,fontWeight:700,fontSize:11}}>{cl.text}</div>
+                      {stdDelta<-0.02&&<div style={{fontSize:9,color:"#fb923c",fontFamily:"var(--font-mono)"}}>STD {(stdDelta*100).toFixed(1)}pp</div>}
+                    </div>
+                  </div>
+                );
+              })}
+              {momentumRows.cooling.length===0&&<div style={{fontSize:11,color:"var(--text-muted)",padding:"12px 0"}}>No reps cooling off right now</div>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── ROW 3: MARKET SIGNALS + SYSTEM INSIGHTS ── */}
+      <div style={{display:"grid",gridTemplateColumns:`${marketSignals.length?"1fr ":""}1fr`,gap:16}}>
+
+        {/* MARKET SIGNALS */}
+        {marketSignals.length>0&&(
+          <div style={{background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+              <span style={{fontSize:15}}>🗺</span>
+              <div>
+                <div style={{fontWeight:800,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>Market Signals</div>
+                <div style={{fontSize:10,color:"var(--text-muted)"}}>Net vol per appointment — normalized for fair comparison</div>
+              </div>
+            </div>
+            {(()=>{
+              const maxNorm=Math.max(...marketSignals.map(m=>m.normNetVol),0.01);
+              return marketSignals.map((m,i)=>{
+                const pct=Math.max(4,(m.normNetVol/maxNorm)*100);
+                const isTop=i===0,isBot=i===marketSignals.length-1&&marketSignals.length>1;
+                const barColor=isTop?"#34d399":isBot?"#f87171":"#38bdf8";
+                return(
+                  <div key={m.name} style={{marginBottom:12}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{fontWeight:600,fontSize:12,color:"var(--text-primary)"}}>{m.name}</span>
+                        {isTop&&<span style={{fontSize:9,color:"#34d399",fontWeight:700,background:"rgba(52,211,153,.1)",padding:"1px 5px",borderRadius:3}}>BEST</span>}
+                        {isBot&&<span style={{fontSize:9,color:"#f87171",fontWeight:700,background:"rgba(248,113,113,.1)",padding:"1px 5px",borderRadius:3}}>LOWEST</span>}
+                      </div>
+                      <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                        <span style={{fontSize:9,color:"var(--text-muted)"}}>{m.repCount} reps</span>
+                        <span style={{fontSize:11,fontWeight:700,color:barColor,fontFamily:"var(--font-mono)"}}>${Math.round(m.normNetVol).toLocaleString()}<span style={{fontSize:9,fontWeight:400,color:"var(--text-muted)"}}>/100</span></span>
+                      </div>
+                    </div>
+                    <div style={{height:6,background:"var(--bg-elevated)",borderRadius:3,overflow:"hidden"}}>
+                      <div style={{height:"100%",width:`${pct}%`,background:barColor,borderRadius:3,transition:"width .5s ease"}}/>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+          </div>
+        )}
+
+        {/* SYSTEM INSIGHTS */}
+        <div style={{background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+            <span style={{fontSize:15}}>💡</span>
+            <div>
+              <div style={{fontWeight:800,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>Team Insights</div>
+              <div style={{fontSize:10,color:"var(--text-muted)"}}>What the data means, in plain English</div>
+            </div>
+          </div>
+          {systemInsights.length===0&&<div style={{color:"var(--text-muted)",fontSize:12,padding:"10px 0"}}>Upload more data to generate team-level insights.</div>}
+          {systemInsights.map((ins,i)=>{
+            const styles={
+              good:{bg:"rgba(52,211,153,.06)",border:"rgba(52,211,153,.18)"},
+              warn:{bg:"rgba(251,191,36,.06)",border:"rgba(251,191,36,.18)"},
+              caution:{bg:"rgba(251,191,36,.05)",border:"rgba(251,191,36,.14)"},
+              info:{bg:"rgba(56,189,248,.05)",border:"rgba(56,189,248,.16)"},
+            };
+            const s=styles[ins.type]||styles.info;
+            return(
+              <div key={i} className="fade-up" style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 13px",borderRadius:"var(--radius-sm)",marginBottom:7,background:s.bg,border:`1px solid ${s.border}`,animationDelay:`${i*.08}s`}}>
+                <span style={{fontSize:15,flexShrink:0}}>{ins.icon}</span>
+                <span style={{fontSize:12,color:"var(--text-secondary)",lineHeight:1.6}}>{ins.text}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── MAIN APP ────────────────────────────────────────────────────────────────
 function App(){
-  const [mainTab,setMainTab]=useState("sales");
+  const [mainTab,setMainTab]=useState("dashboard");
   const [salesSub,setSalesSub]=useState("r30");
   const [dispatchSub,setDispatchSub]=useState("tracker");
   const [r30,setR30]=useState(null);
@@ -2199,7 +2590,7 @@ function App(){
         const trimmed=hist.slice(-52);
         await db.set("history",trimmed);setHistory(trimmed);
       }
-      setSalesSub(uploadWin);setMainTab("sales");setModal(false);setMsg("");
+      setSalesSub(uploadWin);setMainTab("dashboard");setModal(false);setMsg("");
     }catch(err){setMsg("Error: "+err.message);}
     finally{setUploading(false);if(fileRef.current)fileRef.current.value="";}
   },[uploadWin]);
@@ -2241,7 +2632,7 @@ function App(){
         <div style={{fontWeight:800,fontSize:15,color:"var(--text-primary)",marginRight:28,fontFamily:"var(--font-display)",letterSpacing:"-.01em",whiteSpace:"nowrap"}}>
           <span style={{color:"#38bdf8"}}>↗</span> Sales Rank
         </div>
-        {[["sales","📈 Sales Data"],["dispatch","🗂 Dispatch"]].map(([k,label])=>(
+        {[["dashboard","⚡ Dashboard"],["sales","📈 Sales Data"],["dispatch","🗂 Dispatch"]].map(([k,label])=>(
           <button key={k} className="nav-btn" onClick={()=>setMainTab(k)} style={{background:"none",border:"none",padding:"0 14px",height:52,fontFamily:"inherit",color:mainTab===k?"#38bdf8":"var(--text-muted)",borderBottom:mainTab===k?"2px solid #38bdf8":"2px solid transparent",cursor:"pointer",fontWeight:mainTab===k?700:400,fontSize:13,letterSpacing:".02em",whiteSpace:"nowrap",transition:"all .15s"}}>
             {label}
           </button>
@@ -2291,6 +2682,14 @@ function App(){
       {scorecard&&(
         <Scorecard rep={scorecard} r30Data={r30} ytdData={ytd} history={history}
           onClose={()=>setScorecard(null)} teamAvgs={teamAvgs} markets={markets}/>
+      )}
+
+      {/* ══ DASHBOARD TAB ══ */}
+      {mainTab==="dashboard"&&(
+        <DashboardTab
+          r30Data={r30} ytdData={ytd} history={history}
+          markets={markets} marketList={marketList}
+          onOpenScorecard={setScorecard}/>
       )}
 
       {/* ══ SALES TAB ══ */}
