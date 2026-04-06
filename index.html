@@ -968,7 +968,7 @@ function generateMarketInsights(mkt,bench){
 
   // Sort by severity, cap at 6
   raw.sort((a,b)=>a.sev-b.sev);
-  return raw.slice(0,6).map(({sev:_,...rest})=>rest);
+  return raw.slice(0,6).map(({ sev: _, ...rest }) => rest);
 }
 
 // ─── REP BADGE GENERATOR ─────────────────────────────────────────────────────
