@@ -875,6 +875,178 @@ function Scorecard({rep,r30Data,ytdData,history,onClose,teamAvgs,markets={}}){
   );
 }
 
+// ─── MARKET SNAPSHOT TAB ─────────────────────────────────────────────────────
+function MarketSnapshotTab({r30Data,ytdData,markets,marketList}){
+  const [snapWin,setSnapWin]=useState("r30");
+  const src=snapWin==="r30"?r30Data:ytdData;
+
+  const marketCards=useMemo(()=>{
+    if(!src?.reps||!marketList.length)return[];
+    return marketList.map(mkt=>{
+      const reps=src.reps.filter(r=>markets[r.rep]===mkt&&r.tier!=="⛔ Excluded");
+      if(!reps.length)return null;
+      const sum=f=>reps.reduce((a,r)=>a+(r[f]??0),0);
+      const avg=f=>sum(f)/reps.length;
+      const netVol=sum("net_vol");
+      const stdPct=avg("std_pct");
+      const otdPct=avg("otd_pct");
+      const avgDeal=avg("avg_deal");
+      const topRep=reps.slice().sort((a,b)=>b.net_vol-a.net_vol)[0];
+      const eliteCount=reps.filter(r=>r.tier==="🥇 Elite"||r.tier==="🥈 Strong").length;
+      const atRiskCount=reps.filter(r=>r.tier==="⚠ Below Avg"||r.tier==="🔴 Low").length;
+      // momentum vs other window
+      const otherSrc=snapWin==="r30"?ytdData:r30Data;
+      let volTrend=null;
+      if(otherSrc?.reps){
+        const otherReps=otherSrc.reps.filter(r=>markets[r.rep]===mkt&&r.tier!=="⛔ Excluded");
+        if(otherReps.length){
+          const otherVol=otherReps.reduce((a,r)=>a+(r.net_vol??0),0);
+          volTrend=otherVol>0?((netVol-otherVol)/otherVol):null;
+        }
+      }
+      return{name:mkt,repCount:reps.length,netVol,stdPct,otdPct,avgDeal,topRep,eliteCount,atRiskCount,volTrend};
+    }).filter(Boolean).sort((a,b)=>b.netVol-a.netVol);
+  },[src,markets,marketList,snapWin,r30Data,ytdData]);
+
+  // Company-wide rollup
+  const company=useMemo(()=>{
+    if(!r30Data?.reps&&!ytdData?.reps)return null;
+    const r30Active=(r30Data?.reps||[]).filter(r=>r.tier!=="⛔ Excluded");
+    const ytdActive=(ytdData?.reps||[]).filter(r=>r.tier!=="⛔ Excluded");
+    const calc=arr=>arr.length?{
+      netVol:arr.reduce((a,r)=>a+(r.net_vol??0),0),
+      stdPct:arr.reduce((a,r)=>a+(r.std_pct??0),0)/arr.length,
+      otdPct:arr.reduce((a,r)=>a+(r.otd_pct??0),0)/arr.length,
+      avgDeal:arr.reduce((a,r)=>a+(r.avg_deal??0),0)/arr.length,
+      repCount:arr.length,
+    }:null;
+    return{r30:calc(r30Active),ytd:calc(ytdActive)};
+  },[r30Data,ytdData]);
+
+  const noData=!r30Data&&!ytdData;
+  if(noData)return(
+    <div className="empty-state" style={{padding:"60px 0"}}>
+      <div className="empty-icon">🏙</div>
+      <div className="empty-title">No data yet</div>
+      <div className="empty-sub">Upload a CSV to see market standings</div>
+    </div>
+  );
+
+  const trendColor=v=>v==null?"#64748b":v>=.1?"#34d399":v>=0?"#86efac":v>-.1?"#fb923c":"#f87171";
+  const trendIcon=v=>v==null?"➡":v>=.1?"🔥":v>=0?"↑":v>-.1?"↓":"❄";
+  const trendLabel=v=>v==null?"—":((v>=0?"+":"")+((v*100).toFixed(1))+"%");
+
+  return(
+    <div style={{padding:"20px 24px",animation:"fadeUp .2s ease both"}}>
+
+      {/* ── HEADER + WINDOW TOGGLE ── */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
+        <div>
+          <div style={{fontWeight:800,fontSize:18,color:"var(--text-primary)",fontFamily:"var(--font-display)",letterSpacing:"-.01em"}}>Market Snapshot</div>
+          <div style={{fontSize:11,color:"var(--text-muted)",marginTop:3}}>Current standing by market · CEO-level view</div>
+        </div>
+        <div style={{display:"flex",gap:6,background:"var(--bg-elevated)",border:"1px solid var(--border)",borderRadius:"var(--radius)",padding:4}}>
+          {[["r30","Rolling 30"],["ytd","Year to Date"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setSnapWin(v)} style={{padding:"6px 14px",borderRadius:"var(--radius-sm)",border:"none",fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer",transition:"all .15s",background:snapWin===v?"#38bdf8":"transparent",color:snapWin===v?"#000":"var(--text-muted)"}}>
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── COMPANY ROLLUP BANNER ── */}
+      {company&&(
+        <div style={{background:"var(--bg-surface)",border:"1px solid var(--border-strong)",borderRadius:"var(--radius-lg)",padding:"16px 22px",marginBottom:22,display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr 1fr",gap:"0 28px",alignItems:"center"}}>
+          <div style={{paddingRight:24,borderRight:"1px solid var(--border)"}}>
+            <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".08em",textTransform:"uppercase",fontWeight:700,marginBottom:4}}>Company</div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              {r30Data&&<span style={{fontSize:9,padding:"2px 7px",borderRadius:3,background:"rgba(56,189,248,.12)",color:"#38bdf8",fontWeight:700,border:"1px solid rgba(56,189,248,.2)"}}>R30</span>}
+              {ytdData&&<span style={{fontSize:9,padding:"2px 7px",borderRadius:3,background:"rgba(52,211,153,.10)",color:"#34d399",fontWeight:700,border:"1px solid rgba(52,211,153,.2)"}}>YTD</span>}
+            </div>
+          </div>
+          {[
+            ["Net Volume","net_vol",v=>f$(Math.round(v)),"#34d399"],
+            ["STD%","stdPct",v=>fP(v),"#38bdf8"],
+            ["OTD%","otdPct",v=>fP(v),"#a78bfa"],
+            ["Avg Deal","avgDeal",v=>f$(Math.round(v)),"#fbbf24"],
+          ].map(([label,key,fmt,color])=>{
+            const r30v=company.r30?.[key];
+            const ytdv=company.ytd?.[key];
+            return(
+              <div key={key}>
+                <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".06em",textTransform:"uppercase",fontWeight:700,marginBottom:6}}>{label}</div>
+                <div style={{display:"flex",gap:14,alignItems:"baseline"}}>
+                  {r30Data&&<div><div style={{fontSize:9,color:"#38bdf8",marginBottom:1}}>R30</div><div style={{fontSize:15,fontWeight:800,color,fontFamily:"var(--font-mono)"}}>{fmt(r30v??0)}</div></div>}
+                  {ytdData&&<div><div style={{fontSize:9,color:"#34d399",marginBottom:1}}>YTD</div><div style={{fontSize:15,fontWeight:800,color:ytdData?"var(--text-secondary)":color,fontFamily:"var(--font-mono)"}}>{fmt(ytdv??0)}</div></div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── MARKET CARDS ── */}
+      {marketCards.length===0?(
+        <div style={{textAlign:"center",padding:"40px 0",color:"var(--text-muted)",fontSize:13}}>
+          No markets configured — assign reps to markets in the Dispatch tab first.
+        </div>
+      ):(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:14}}>
+          {marketCards.map((mkt,idx)=>(
+            <div key={mkt.name} className="metric-card fade-up" style={{animationDelay:`${idx*.05}s`,background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18,position:"relative",overflow:"hidden"}}>
+              {/* rank badge */}
+              <div style={{position:"absolute",top:14,right:14,width:26,height:26,borderRadius:"50%",background:"rgba(56,189,248,.08)",border:"1px solid rgba(56,189,248,.18)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#38bdf8",fontFamily:"var(--font-mono)"}}>{idx+1}</div>
+
+              {/* market name + rep count */}
+              <div style={{marginBottom:14}}>
+                <div style={{fontWeight:800,fontSize:15,color:"var(--text-primary)",fontFamily:"var(--font-display)",marginBottom:3}}>{mkt.name}</div>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  <span style={{fontSize:10,color:"var(--text-muted)"}}>{mkt.repCount} active rep{mkt.repCount!==1?"s":""}</span>
+                  {mkt.eliteCount>0&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:3,background:"rgba(245,158,11,.12)",color:"#f59e0b",fontWeight:700,border:"1px solid rgba(245,158,11,.2)"}}>🥇 {mkt.eliteCount} top tier</span>}
+                  {mkt.atRiskCount>0&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:3,background:"rgba(248,113,113,.10)",color:"#f87171",fontWeight:700,border:"1px solid rgba(248,113,113,.2)"}}>⚠ {mkt.atRiskCount} at risk</span>}
+                </div>
+              </div>
+
+              {/* 4 key metrics grid */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+                {[
+                  {label:"Net Volume",val:f$(Math.round(mkt.netVol)),color:"#34d399",key:"netVol"},
+                  {label:"STD%",val:fP(mkt.stdPct),color:"#38bdf8",key:"stdPct"},
+                  {label:"OTD%",val:fP(mkt.otdPct),color:"#a78bfa",key:"otdPct"},
+                  {label:"Avg Deal",val:f$(Math.round(mkt.avgDeal)),color:"#fbbf24",key:"avgDeal"},
+                ].map(({label,val,color})=>(
+                  <div key={label} style={{background:"var(--bg-elevated)",borderRadius:"var(--radius-sm)",padding:"10px 12px",border:"1px solid var(--border)"}}>
+                    <div style={{fontSize:9,color:"var(--text-muted)",letterSpacing:".06em",textTransform:"uppercase",fontWeight:700,marginBottom:4}}>{label}</div>
+                    <div style={{fontSize:15,fontWeight:800,color,fontFamily:"var(--font-mono)"}}>{val}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* volume trend vs other window */}
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",borderTop:"1px solid var(--border)",paddingTop:12}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:11}}>{trendIcon(mkt.volTrend)}</span>
+                  <div>
+                    <div style={{fontSize:9,color:"var(--text-muted)",letterSpacing:".04em"}}>Vol vs {snapWin==="r30"?"YTD":"R30"}</div>
+                    <div style={{fontSize:12,fontWeight:700,color:trendColor(mkt.volTrend),fontFamily:"var(--font-mono)"}}>{trendLabel(mkt.volTrend)}</div>
+                  </div>
+                </div>
+                {mkt.topRep&&(
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:9,color:"var(--text-muted)",marginBottom:2}}>Top Producer</div>
+                    <div style={{fontSize:11,fontWeight:700,color:"var(--text-primary)",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{mkt.topRep.rep}</div>
+                    <div style={{fontSize:9,color:"#34d399",fontFamily:"var(--font-mono)"}}>{f$(mkt.topRep.net_vol)}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── TRENDS TAB ──────────────────────────────────────────────────────────────
 function TrendsTab({r30Data,ytdData,history,onOpenScorecard}){
   const trendRows=useMemo(()=>{
@@ -2269,8 +2441,6 @@ function DashboardTab({r30Data,ytdData,history,markets,marketList,onOpenScorecar
     return{text:"❄ Cooling",color:"#38bdf8"};
   };
 
-  const [expandedInsight,setExpandedInsight]=useState(null);
-
   const noData=!r30Data&&!ytdData;
   const hasTrends=!!(r30Data&&ytdData);
 
@@ -2500,59 +2670,69 @@ function DashboardTab({r30Data,ytdData,history,markets,marketList,onOpenScorecar
         )}
 
         {/* SYSTEM INSIGHTS */}
-        <div style={{background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
-            <span style={{fontSize:15}}>💡</span>
-            <div>
-              <div style={{fontWeight:800,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>Team Insights</div>
-              <div style={{fontSize:10,color:"var(--text-muted)"}}>What the data means, in plain English</div>
-            </div>
-          </div>
-          {systemInsights.length===0&&<div style={{color:"var(--text-muted)",fontSize:12,padding:"10px 0"}}>Upload more data to generate team-level insights.</div>}
-          {systemInsights.map((ins,i)=>{
-            const iStyles={good:{accent:"#34d399",bg:"rgba(52,211,153,.05)",border:"rgba(52,211,153,.15)",borderExp:"rgba(52,211,153,.40)"},warn:{accent:"#fbbf24",bg:"rgba(251,191,36,.05)",border:"rgba(251,191,36,.15)",borderExp:"rgba(251,191,36,.42)"},caution:{accent:"#fb923c",bg:"rgba(251,146,60,.04)",border:"rgba(251,146,60,.13)",borderExp:"rgba(251,146,60,.35)"},info:{accent:"#38bdf8",bg:"rgba(56,189,248,.04)",border:"rgba(56,189,248,.14)",borderExp:"rgba(56,189,248,.38)"}};
-            const s=iStyles[ins.type]||iStyles.info;
-            const isExp=expandedInsight===i;
-            const reps=ins.reps||[];
-            const getMetric=rep=>{
-              if(ins.icon==="⚠️"&&ins.type==="warn")return{label:"Fallout%",value:fP(rep.fallout_rate)};
-              if(ins.icon==="📉")return{label:"NetStk%",value:fP(rep.net_issue_rate)};
-              return{label:"Score",value:(rep.score??0).toFixed(4)};
-            };
-            return(
-              <div key={i} className="fade-up"
-                onClick={()=>setExpandedInsight(isExp?null:i)}
-                style={{borderRadius:"var(--radius-sm)",marginBottom:7,background:s.bg,border:`1px solid ${isExp?s.borderExp:s.border}`,borderLeft:`3px solid ${isExp?s.accent:s.border}`,animationDelay:`${i*.08}s`,cursor:"pointer",transition:"border-color .15s, border-left-color .15s"}}>
-                <div style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 13px"}}>
-                  <span style={{fontSize:15,flexShrink:0}}>{ins.icon}</span>
-                  <span style={{fontSize:12,color:"var(--text-secondary)",lineHeight:1.6,flex:1}}>{ins.text}</span>
-                  {reps.length>0&&(
-                    <span style={{flexShrink:0,fontSize:10,fontWeight:700,color:s.accent,background:`${s.accent}14`,border:`1px solid ${s.accent}30`,borderRadius:20,padding:"2px 8px",whiteSpace:"nowrap",marginTop:1,transition:"background .15s"}}>
-                      <span style={{fontSize:9,marginRight:3}}>{isExp?"▾":"▸"}</span>{reps.length} rep{reps.length>1?"s":""}
-                    </span>
-                  )}
+        {(()=>{
+          const [expandedInsight,setExpandedInsight]=useState(null);
+          const insightStyles={
+            good:   {accent:"#34d399",bg:"rgba(52,211,153,.05)",  border:"rgba(52,211,153,.15)",borderExp:"rgba(52,211,153,.40)"},
+            warn:   {accent:"#fbbf24",bg:"rgba(251,191,36,.05)",  border:"rgba(251,191,36,.15)",borderExp:"rgba(251,191,36,.42)"},
+            caution:{accent:"#fb923c",bg:"rgba(251,146,60,.04)",  border:"rgba(251,146,60,.13)",borderExp:"rgba(251,146,60,.35)"},
+            info:   {accent:"#38bdf8",bg:"rgba(56,189,248,.04)",  border:"rgba(56,189,248,.14)",borderExp:"rgba(56,189,248,.38)"},
+          };
+          const getRepMetric=(ins,rep)=>{
+            if(ins.icon==="⚠️"&&ins.type==="warn")return{label:"Fallout%",value:fP(rep.fallout_rate)};
+            if(ins.icon==="📉")return{label:"NetStk%",value:fP(rep.net_issue_rate)};
+            return{label:"Score",value:(rep.score??0).toFixed(4)};
+          };
+          return(
+            <div style={{background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+                <span style={{fontSize:15}}>💡</span>
+                <div>
+                  <div style={{fontWeight:800,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>Team Insights</div>
+                  <div style={{fontSize:10,color:"var(--text-muted)"}}>What the data means, in plain English</div>
                 </div>
-                {isExp&&reps.length>0&&(
-                  <div style={{borderTop:`1px solid ${s.accent}22`,padding:"6px 13px 10px"}}>
-                    {reps.map((rep,ri)=>{
-                      const metric=getMetric(rep);
-                      return(
-                        <div key={rep.rep} className="fade-up"
-                          onClick={e=>{e.stopPropagation();onOpenScorecard(rep.rep);}}
-                          style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 8px",borderRadius:"var(--radius-sm)",cursor:"pointer",transition:"background .12s",animationDelay:`${ri*.04}s`}}
-                          onMouseEnter={e=>e.currentTarget.style.background="var(--bg-hover)"}
-                          onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                          <span style={{fontSize:12,color:"var(--text-primary)",fontWeight:500}}>{rep.rep}</span>
-                          <span style={{fontSize:11,fontFamily:"var(--font-mono)"}}><span style={{fontSize:9,color:"var(--text-faint)",marginRight:4}}>{metric.label}</span><span style={{color:s.accent,fontWeight:600}}>{metric.value}</span></span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
-            );
-          })}
-        </div>
+              {systemInsights.length===0&&<div style={{color:"var(--text-muted)",fontSize:12,padding:"10px 0"}}>Upload more data to generate team-level insights.</div>}
+              {systemInsights.map((ins,i)=>{
+                const s=insightStyles[ins.type]||insightStyles.info;
+                const isExp=expandedInsight===i;
+                const reps=ins.reps||[];
+                return(
+                  <div key={i} className="fade-up"
+                    onClick={()=>setExpandedInsight(isExp?null:i)}
+                    style={{borderRadius:"var(--radius-sm)",marginBottom:7,background:s.bg,border:`1px solid ${isExp?s.borderExp:s.border}`,borderLeft:`3px solid ${isExp?s.accent:s.border}`,animationDelay:`${i*.08}s`,cursor:"pointer",transition:"border-color .15s, border-left-color .15s"}}>
+                    <div style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 13px"}}>
+                      <span style={{fontSize:15,flexShrink:0}}>{ins.icon}</span>
+                      <span style={{fontSize:12,color:"var(--text-secondary)",lineHeight:1.6,flex:1}}>{ins.text}</span>
+                      {reps.length>0&&(
+                        <span style={{flexShrink:0,fontSize:10,fontWeight:700,color:s.accent,background:`${s.accent}14`,border:`1px solid ${s.accent}30`,borderRadius:20,padding:"2px 8px",whiteSpace:"nowrap",marginTop:1,transition:"background .15s"}}>
+                          <span style={{fontSize:9,marginRight:3}}>{isExp?"▾":"▸"}</span>{reps.length} rep{reps.length>1?"s":""}
+                        </span>
+                      )}
+                    </div>
+                    {isExp&&reps.length>0&&(
+                      <div style={{borderTop:`1px solid ${s.accent}22`,padding:"6px 13px 10px"}}>
+                        {reps.map((rep,ri)=>{
+                          const metric=getRepMetric(ins,rep);
+                          return(
+                            <div key={rep.rep} className="fade-up"
+                              onClick={e=>{e.stopPropagation();onOpenScorecard(rep.rep);}}
+                              style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 8px",borderRadius:"var(--radius-sm)",cursor:"pointer",transition:"background .12s",animationDelay:`${ri*.04}s`}}
+                              onMouseEnter={e=>e.currentTarget.style.background="var(--bg-hover)"}
+                              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                              <span style={{fontSize:12,color:"var(--text-primary)",fontWeight:500}}>{rep.rep}</span>
+                              <span style={{fontSize:11,fontFamily:"var(--font-mono)"}}><span style={{fontSize:9,color:"var(--text-faint)",marginRight:4}}>{metric.label}</span><span style={{color:s.accent,fontWeight:600}}>{metric.value}</span></span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
@@ -2728,7 +2908,7 @@ function App(){
           {/* SUB NAV */}
           <div style={{background:"var(--bg-surface)",borderBottom:"1px solid var(--border)",padding:"10px 22px",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
             <div className="seg-control">
-              {[["r30","Rolling 30"],["ytd","Year to Date"],["trends","📈 Trends"],["deep","Deep Stats"]].map(([v,label])=>(
+              {[["r30","Rolling 30"],["ytd","Year to Date"],["trends","📈 Trends"],["deep","Deep Stats"],["snapshot","🏙 Market Snapshot"]].map(([v,label])=>(
                 <button key={v} className={`seg-btn${salesSub===v?" active":""}`} onClick={()=>setSalesSub(v)}>{label}</button>
               ))}
             </div>
@@ -2895,6 +3075,9 @@ function App(){
                   </div>
                 )}
               </div>
+            )}
+            {salesSub==="snapshot"&&(
+              <MarketSnapshotTab r30Data={r30} ytdData={ytd} markets={markets} marketList={marketList}/>
             )}
           </div>
         </div>
