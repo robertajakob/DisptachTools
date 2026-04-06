@@ -876,9 +876,11 @@ function Scorecard({rep,r30Data,ytdData,history,onClose,teamAvgs,markets={}}){
 }
 
 // ─── MARKET SNAPSHOT TAB ─────────────────────────────────────────────────────
-function MarketSnapshotTab({r30Data,ytdData,markets,marketList}){
+function MarketSnapshotTab({r30Data,ytdData,markets,marketList,onOpenScorecard}){
   const [snapWin,setSnapWin]=useState("r30");
+  const [selectedMarket,setSelectedMarket]=useState(null);
   const src=snapWin==="r30"?r30Data:ytdData;
+  const otherSrc=snapWin==="r30"?ytdData:r30Data;
 
   const marketCards=useMemo(()=>{
     if(!src?.reps||!marketList.length)return[];
@@ -891,11 +893,10 @@ function MarketSnapshotTab({r30Data,ytdData,markets,marketList}){
       const stdPct=avg("std_pct");
       const otdPct=avg("otd_pct");
       const avgDeal=avg("avg_deal");
-      const topRep=reps.slice().sort((a,b)=>b.net_vol-a.net_vol)[0];
+      const topRep=reps.slice().sort((a,b)=>(b.net_vol??0)-(a.net_vol??0))[0];
       const eliteCount=reps.filter(r=>r.tier==="🥇 Elite"||r.tier==="🥈 Strong").length;
       const atRiskCount=reps.filter(r=>r.tier==="⚠ Below Avg"||r.tier==="🔴 Low").length;
-      // momentum vs other window
-      const otherSrc=snapWin==="r30"?ytdData:r30Data;
+
       let volTrend=null;
       if(otherSrc?.reps){
         const otherReps=otherSrc.reps.filter(r=>markets[r.rep]===mkt&&r.tier!=="⛔ Excluded");
@@ -904,11 +905,11 @@ function MarketSnapshotTab({r30Data,ytdData,markets,marketList}){
           volTrend=otherVol>0?((netVol-otherVol)/otherVol):null;
         }
       }
+
       return{name:mkt,repCount:reps.length,netVol,stdPct,otdPct,avgDeal,topRep,eliteCount,atRiskCount,volTrend};
     }).filter(Boolean).sort((a,b)=>b.netVol-a.netVol);
-  },[src,markets,marketList,snapWin,r30Data,ytdData]);
+  },[src,otherSrc,markets,marketList]);
 
-  // Company-wide rollup
   const company=useMemo(()=>{
     if(!r30Data?.reps&&!ytdData?.reps)return null;
     const r30Active=(r30Data?.reps||[]).filter(r=>r.tier!=="⛔ Excluded");
@@ -923,6 +924,119 @@ function MarketSnapshotTab({r30Data,ytdData,markets,marketList}){
     return{r30:calc(r30Active),ytd:calc(ytdActive)};
   },[r30Data,ytdData]);
 
+  const detailData=useMemo(()=>{
+    if(!selectedMarket||!src?.reps)return null;
+
+    const reps=src.reps.filter(r=>markets[r.rep]===selectedMarket&&r.tier!=="⛔ Excluded");
+    if(!reps.length)return null;
+
+    const normalizeRank=v=>{
+      if(v==null||v==="-"||v==="—"||v==="")return Number.POSITIVE_INFINITY;
+      const n=Number(v);
+      return Number.isFinite(n)?n:Number.POSITIVE_INFINITY;
+    };
+
+    const sorted=[...reps].sort((a,b)=>{
+      const ra=normalizeRank(a.rank), rb=normalizeRank(b.rank);
+      if(ra!==rb)return ra-rb;
+      return (b.net_vol??0)-(a.net_vol??0);
+    });
+
+    const sum=f=>reps.reduce((a,r)=>a+(r[f]??0),0);
+    const avg=f=>sum(f)/reps.length;
+
+    const mktNetVol=sum("net_vol");
+    const mktStdPct=avg("std_pct");
+    const mktOtdPct=avg("otd_pct");
+    const mktAvgDeal=avg("avg_deal");
+    const mktFallout=avg("fallout_rate");
+    const mktNir=avg("net_issue_rate");
+    const mktRank=marketCards.findIndex(m=>m.name===selectedMarket)+1;
+    const topRep=[...reps].sort((a,b)=>(b.net_vol??0)-(a.net_vol??0))[0];
+
+    const allActive=src.reps.filter(r=>r.tier!=="⛔ Excluded");
+    const coAvg=f=>allActive.length?allActive.reduce((a,r)=>a+(r[f]??0),0)/allActive.length:0;
+    const coStd=coAvg("std_pct");
+    const coFallout=coAvg("fallout_rate");
+    const coNir=coAvg("net_issue_rate");
+    const coAvgDeal=coAvg("avg_deal");
+    const companyNetVol=allActive.reduce((a,r)=>a+(r.net_vol??0),0);
+
+    let deltas=null;
+    if(otherSrc?.reps){
+      const otherReps=otherSrc.reps.filter(r=>markets[r.rep]===selectedMarket&&r.tier!=="⛔ Excluded");
+      if(otherReps.length){
+        const otherSum=f=>otherReps.reduce((a,r)=>a+(r[f]??0),0);
+        const otherAvg=f=>otherSum(f)/otherReps.length;
+        const otherNetVol=otherSum("net_vol");
+        deltas={
+          vol:otherNetVol>0?(mktNetVol-otherNetVol)/otherNetVol:null,
+          std:mktStdPct-otherAvg("std_pct"),
+          otd:mktOtdPct-otherAvg("otd_pct"),
+          deal:mktAvgDeal-otherAvg("avg_deal"),
+        };
+      }
+    }
+
+    const shortName=repName=>{
+      if(!repName)return "Unknown";
+      if(repName.includes(","))return repName.split(",")[1].trim();
+      return repName.split(" ")[0];
+    };
+
+    const insights=[];
+    const topTwo=[...reps].sort((a,b)=>(b.net_vol??0)-(a.net_vol??0)).slice(0,2);
+    const topTwoVol=topTwo.reduce((a,r)=>a+(r.net_vol??0),0);
+    if(reps.length>=3&&mktNetVol>0&&topTwoVol/mktNetVol>=0.7){
+      insights.push({icon:"⚡",type:"warn",text:`${topTwo.map(r=>shortName(r.rep)).join(" & ")} are driving ${Math.round(topTwoVol/mktNetVol*100)}% of market volume.`});
+    }
+    if(mktFallout>coFallout*1.25){
+      insights.push({icon:"⚠️",type:"warn",text:`High fallout vs company average (${fP(mktFallout)} vs ${fP(coFallout)}).`});
+    }else if(mktFallout<coFallout*0.8&&reps.length>=2){
+      insights.push({icon:"✅",type:"good",text:`Deal quality is holding well with below-average fallout.`});
+    }
+    if(mktStdPct>=0.35&&mktNir<0.65){
+      insights.push({icon:"🔄",type:"warn",text:`Strong close rate but weak stick rate (${fP(mktStdPct)} STD, ${fP(mktNir)} NetStk).`});
+    }else if(mktStdPct>=0.35&&mktNir>=0.75){
+      insights.push({icon:"💪",type:"good",text:`Strong close rate and stick rate — durable revenue profile.`});
+    }
+    const aboveAvgStd=reps.filter(r=>(r.std_pct??0)>coStd).length;
+    if(reps.length>=3&&aboveAvgStd===1){
+      insights.push({icon:"📊",type:"caution",text:`Only 1 of ${reps.length} reps is above company-average STD%.`});
+    }
+    const lowDemo=reps.filter(r=>(r.demo??0)<8).length;
+    if(reps.length>=2&&lowDemo>=Math.ceil(reps.length/2)){
+      insights.push({icon:"🔬",type:"caution",text:`${lowDemo} of ${reps.length} reps have low sample size.`});
+    }
+    if(companyNetVol>0&&mktNetVol/companyNetVol>=0.2){
+      insights.push({icon:"🏆",type:"good",text:`This market is carrying over 20% of total ${snapWin==="r30"?"R30":"YTD"} net volume.`});
+    }
+
+    const carrying=[...reps].sort((a,b)=>(b.net_vol??0)-(a.net_vol??0)).slice(0,2);
+    const moreLeads=[...reps]
+      .filter(r=>(r.std_pct??0)>=0.32&&(r.net_issue_rate??0)>=0.70)
+      .sort((a,b)=>(b.std_pct??0)-(a.std_pct??0))
+      .slice(0,2);
+    const caution=[...reps]
+      .filter(r=>(r.fallout_rate??0)>coFallout*1.3)
+      .sort((a,b)=>(b.fallout_rate??0)-(a.fallout_rate??0));
+    const lowSample=[...reps]
+      .filter(r=>(r.demo??0)<8)
+      .sort((a,b)=>(a.demo??0)-(b.demo??0));
+
+    return{
+      sorted,
+      mktNetVol,mktStdPct,mktOtdPct,mktAvgDeal,mktFallout,mktNir,mktRank,topRep,deltas,
+      insights:insights.slice(0,5),
+      coStd,coFallout,coNir,coAvgDeal,
+      carrying,moreLeads,caution,lowSample,
+    };
+  },[selectedMarket,src,otherSrc,markets,marketCards,snapWin]);
+
+  useEffect(()=>{
+    if(selectedMarket&&!marketCards.some(m=>m.name===selectedMarket))setSelectedMarket(null);
+  },[selectedMarket,marketCards]);
+
   const noData=!r30Data&&!ytdData;
   if(noData)return(
     <div className="empty-state" style={{padding:"60px 0"}}>
@@ -935,6 +1049,16 @@ function MarketSnapshotTab({r30Data,ytdData,markets,marketList}){
   const trendColor=v=>v==null?"#64748b":v>=.1?"#34d399":v>=0?"#86efac":v>-.1?"#fb923c":"#f87171";
   const trendIcon=v=>v==null?"➡":v>=.1?"🔥":v>=0?"↑":v>-.1?"↓":"❄";
   const trendLabel=v=>v==null?"—":((v>=0?"+":"")+((v*100).toFixed(1))+"%");
+  const deltaColor=v=>v==null?"#64748b":v>0?"#34d399":v<0?"#f87171":"#94a3b8";
+  const formatDeltaPp=v=>v==null?"—":`${v>0?"+":""}${(v*100).toFixed(1)}pp`;
+  const formatDeltaMoney=v=>v==null?"—":`${v>0?"+":""}${f$(Math.round(v))}`;
+
+  const selectedCard=selectedMarket?marketCards.find(m=>m.name===selectedMarket):null;
+  const insightStyles={
+    good:{bg:"rgba(52,211,153,.06)",border:"rgba(52,211,153,.2)"},
+    warn:{bg:"rgba(248,113,113,.06)",border:"rgba(248,113,113,.2)"},
+    caution:{bg:"rgba(251,191,36,.06)",border:"rgba(251,191,36,.2)"},
+  };
 
   return(
     <div style={{padding:"20px 24px",animation:"fadeUp .2s ease both"}}>
@@ -947,7 +1071,7 @@ function MarketSnapshotTab({r30Data,ytdData,markets,marketList}){
         </div>
         <div style={{display:"flex",gap:6,background:"var(--bg-elevated)",border:"1px solid var(--border)",borderRadius:"var(--radius)",padding:4}}>
           {[["r30","Rolling 30"],["ytd","Year to Date"]].map(([v,l])=>(
-            <button key={v} onClick={()=>setSnapWin(v)} style={{padding:"6px 14px",borderRadius:"var(--radius-sm)",border:"none",fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer",transition:"all .15s",background:snapWin===v?"#38bdf8":"transparent",color:snapWin===v?"#000":"var(--text-muted)"}}>
+            <button key={v} onClick={()=>{setSnapWin(v);setSelectedMarket(null);}} style={{padding:"6px 14px",borderRadius:"var(--radius-sm)",border:"none",fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer",transition:"all .15s",background:snapWin===v?"#38bdf8":"transparent",color:snapWin===v?"#000":"var(--text-muted)"}}>
               {l}
             </button>
           ))}
@@ -965,7 +1089,7 @@ function MarketSnapshotTab({r30Data,ytdData,markets,marketList}){
             </div>
           </div>
           {[
-            ["Net Volume","net_vol",v=>f$(Math.round(v)),"#34d399"],
+            ["Net Volume","netVol",v=>f$(Math.round(v)),"#34d399"],
             ["STD%","stdPct",v=>fP(v),"#38bdf8"],
             ["OTD%","otdPct",v=>fP(v),"#a78bfa"],
             ["Avg Deal","avgDeal",v=>f$(Math.round(v)),"#fbbf24"],
@@ -991,1750 +1115,277 @@ function MarketSnapshotTab({r30Data,ytdData,markets,marketList}){
           No markets configured — assign reps to markets in the Dispatch tab first.
         </div>
       ):(
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:14}}>
-          {marketCards.map((mkt,idx)=>(
-            <div key={mkt.name} className="metric-card fade-up" style={{animationDelay:`${idx*.05}s`,background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18,position:"relative",overflow:"hidden"}}>
-              {/* rank badge */}
-              <div style={{position:"absolute",top:14,right:14,width:26,height:26,borderRadius:"50%",background:"rgba(56,189,248,.08)",border:"1px solid rgba(56,189,248,.18)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#38bdf8",fontFamily:"var(--font-mono)"}}>{idx+1}</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:14,marginBottom:selectedMarket?18:0}}>
+          {marketCards.map((mkt,idx)=>{
+            const isSelected=selectedMarket===mkt.name;
+            return(
+              <div
+                key={mkt.name}
+                className="metric-card fade-up"
+                onClick={()=>setSelectedMarket(isSelected?null:mkt.name)}
+                style={{
+                  animationDelay:`${idx*.05}s`,
+                  background:"var(--bg-surface)",
+                  border:isSelected?"1px solid #38bdf8":"1px solid var(--border)",
+                  borderRadius:"var(--radius-lg)",
+                  padding:18,
+                  position:"relative",
+                  overflow:"hidden",
+                  cursor:"pointer",
+                  boxShadow:isSelected?"0 0 0 1px rgba(56,189,248,.18), 0 12px 28px rgba(0,0,0,.28)":"none",
+                  transform:isSelected?"translateY(-1px)":"none",
+                  transition:"border-color .15s, box-shadow .15s, transform .15s, background .15s",
+                }}
+                onMouseEnter={e=>{if(!isSelected)e.currentTarget.style.background="var(--bg-elevated)";}}
+                onMouseLeave={e=>{if(!isSelected)e.currentTarget.style.background="var(--bg-surface)";}}
+              >
+                <div style={{position:"absolute",left:0,right:0,top:0,height:3,background:isSelected?"linear-gradient(90deg,#38bdf8,#34d399)":"transparent"}}/>
+                <div style={{position:"absolute",top:14,right:14,width:26,height:26,borderRadius:"50%",background:isSelected?"rgba(56,189,248,.16)":"rgba(56,189,248,.08)",border:isSelected?"1px solid rgba(56,189,248,.35)":"1px solid rgba(56,189,248,.18)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#38bdf8",fontFamily:"var(--font-mono)"}}>{idx+1}</div>
 
-              {/* market name + rep count */}
-              <div style={{marginBottom:14}}>
-                <div style={{fontWeight:800,fontSize:15,color:"var(--text-primary)",fontFamily:"var(--font-display)",marginBottom:3}}>{mkt.name}</div>
-                <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                  <span style={{fontSize:10,color:"var(--text-muted)"}}>{mkt.repCount} active rep{mkt.repCount!==1?"s":""}</span>
-                  {mkt.eliteCount>0&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:3,background:"rgba(245,158,11,.12)",color:"#f59e0b",fontWeight:700,border:"1px solid rgba(245,158,11,.2)"}}>🥇 {mkt.eliteCount} top tier</span>}
-                  {mkt.atRiskCount>0&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:3,background:"rgba(248,113,113,.10)",color:"#f87171",fontWeight:700,border:"1px solid rgba(248,113,113,.2)"}}>⚠ {mkt.atRiskCount} at risk</span>}
+                <div style={{marginBottom:14}}>
+                  <div style={{fontWeight:800,fontSize:15,color:"var(--text-primary)",fontFamily:"var(--font-display)",marginBottom:3}}>{mkt.name}</div>
+                  <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                    <span style={{fontSize:10,color:"var(--text-muted)"}}>{mkt.repCount} active rep{mkt.repCount!==1?"s":""}</span>
+                    {mkt.eliteCount>0&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:3,background:"rgba(245,158,11,.12)",color:"#f59e0b",fontWeight:700,border:"1px solid rgba(245,158,11,.2)"}}>🥇 {mkt.eliteCount} top tier</span>}
+                    {mkt.atRiskCount>0&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:3,background:"rgba(248,113,113,.10)",color:"#f87171",fontWeight:700,border:"1px solid rgba(248,113,113,.2)"}}>⚠ {mkt.atRiskCount} at risk</span>}
+                  </div>
+                </div>
+
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+                  {[
+                    {label:"Net Volume",val:f$(Math.round(mkt.netVol)),color:"#34d399"},
+                    {label:"STD%",val:fP(mkt.stdPct),color:"#38bdf8"},
+                    {label:"OTD%",val:fP(mkt.otdPct),color:"#a78bfa"},
+                    {label:"Avg Deal",val:f$(Math.round(mkt.avgDeal)),color:"#fbbf24"},
+                  ].map(({label,val,color})=>(
+                    <div key={label} style={{background:"var(--bg-elevated)",borderRadius:"var(--radius-sm)",padding:"10px 12px",border:"1px solid var(--border)"}}>
+                      <div style={{fontSize:9,color:"var(--text-muted)",letterSpacing:".06em",textTransform:"uppercase",fontWeight:700,marginBottom:4}}>{label}</div>
+                      <div style={{fontSize:15,fontWeight:800,color,fontFamily:"var(--font-mono)"}}>{val}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",borderTop:"1px solid var(--border)",paddingTop:12}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:11}}>{trendIcon(mkt.volTrend)}</span>
+                    <div>
+                      <div style={{fontSize:9,color:"var(--text-muted)",letterSpacing:".04em"}}>Vol vs {snapWin==="r30"?"YTD":"R30"}</div>
+                      <div style={{fontSize:12,fontWeight:700,color:trendColor(mkt.volTrend),fontFamily:"var(--font-mono)"}}>{trendLabel(mkt.volTrend)}</div>
+                    </div>
+                  </div>
+                  {mkt.topRep&&(
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:9,color:"var(--text-muted)",marginBottom:2}}>Top Producer</div>
+                      <div style={{fontSize:11,fontWeight:700,color:"var(--text-primary)",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{mkt.topRep.rep}</div>
+                      <div style={{fontSize:9,color:"#34d399",fontFamily:"var(--font-mono)"}}>{f$(mkt.topRep.net_vol)}</div>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{marginTop:10,textAlign:"center",fontSize:9,color:isSelected?"#38bdf8":"var(--text-faint)",letterSpacing:".05em",fontWeight:isSelected?700:500}}>
+                  {isSelected?"▼ EXPANDED BELOW":"CLICK TO DRILL DOWN"}
                 </div>
               </div>
+            );
+          })}
+        </div>
+      )}
 
-              {/* 4 key metrics grid */}
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+      {/* ── DETAIL PANEL ── */}
+      {selectedCard&&detailData&&(
+        <div className="slide-in" style={{background:"var(--bg-surface)",border:"1px solid #38bdf8",borderRadius:"var(--radius-lg)",padding:"22px 24px",marginBottom:20}}>
+          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:20,gap:16,flexWrap:"wrap"}}>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4,flexWrap:"wrap"}}>
+                <div style={{fontWeight:900,fontSize:20,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>{selectedCard.name}</div>
+                <span style={{fontSize:11,color:"#38bdf8",background:"rgba(56,189,248,.10)",padding:"2px 9px",borderRadius:12,fontWeight:700,border:"1px solid rgba(56,189,248,.2)"}}>Rank #{detailData.mktRank}</span>
+                <span style={{fontSize:11,color:"var(--text-muted)"}}>{detailData.sorted.length} rep{detailData.sorted.length!==1?"s":""}</span>
+              </div>
+              {detailData.topRep&&<div style={{fontSize:11,color:"var(--text-muted)"}}>Top producer: <span style={{color:"#fbbf24",fontWeight:700}}>{detailData.topRep.rep}</span> · <span style={{color:"#34d399",fontFamily:"var(--font-mono)"}}>{f$(detailData.topRep.net_vol)}</span></div>}
+            </div>
+            <button onClick={()=>setSelectedMarket(null)} style={{padding:"8px 12px",borderRadius:"var(--radius-sm)",border:"1px solid var(--border-strong)",background:"var(--bg-elevated)",color:"var(--text-secondary)",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+              Close
+            </button>
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"minmax(0,1.4fr) minmax(280px,.8fr)",gap:18,marginBottom:18}}>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
+                <span style={{fontSize:11,fontWeight:700,color:"var(--text-primary)",letterSpacing:".08em",fontFamily:"var(--font-display)"}}>📊 MARKET METRICS</span>
+                <div style={{flex:1,height:1,background:"var(--border)"}}/>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>
                 {[
-                  {label:"Net Volume",val:f$(Math.round(mkt.netVol)),color:"#34d399",key:"netVol"},
-                  {label:"STD%",val:fP(mkt.stdPct),color:"#38bdf8",key:"stdPct"},
-                  {label:"OTD%",val:fP(mkt.otdPct),color:"#a78bfa",key:"otdPct"},
-                  {label:"Avg Deal",val:f$(Math.round(mkt.avgDeal)),color:"#fbbf24",key:"avgDeal"},
-                ].map(({label,val,color})=>(
+                  ["Net Volume",f$(Math.round(detailData.mktNetVol)),"#34d399"],
+                  ["STD%",fP(detailData.mktStdPct),"#38bdf8"],
+                  ["OTD%",fP(detailData.mktOtdPct),"#a78bfa"],
+                  ["Avg Deal",f$(Math.round(detailData.mktAvgDeal)),"#fbbf24"],
+                  ["Fallout%",fP(detailData.mktFallout),"#fb923c"],
+                  ["NetStk%",fP(detailData.mktNir),"#34d399"],
+                ].map(([label,val,color])=>(
                   <div key={label} style={{background:"var(--bg-elevated)",borderRadius:"var(--radius-sm)",padding:"10px 12px",border:"1px solid var(--border)"}}>
                     <div style={{fontSize:9,color:"var(--text-muted)",letterSpacing:".06em",textTransform:"uppercase",fontWeight:700,marginBottom:4}}>{label}</div>
                     <div style={{fontSize:15,fontWeight:800,color,fontFamily:"var(--font-mono)"}}>{val}</div>
                   </div>
                 ))}
               </div>
-
-              {/* volume trend vs other window */}
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",borderTop:"1px solid var(--border)",paddingTop:12}}>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:11}}>{trendIcon(mkt.volTrend)}</span>
-                  <div>
-                    <div style={{fontSize:9,color:"var(--text-muted)",letterSpacing:".04em"}}>Vol vs {snapWin==="r30"?"YTD":"R30"}</div>
-                    <div style={{fontSize:12,fontWeight:700,color:trendColor(mkt.volTrend),fontFamily:"var(--font-mono)"}}>{trendLabel(mkt.volTrend)}</div>
-                  </div>
-                </div>
-                {mkt.topRep&&(
-                  <div style={{textAlign:"right"}}>
-                    <div style={{fontSize:9,color:"var(--text-muted)",marginBottom:2}}>Top Producer</div>
-                    <div style={{fontSize:11,fontWeight:700,color:"var(--text-primary)",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{mkt.topRep.rep}</div>
-                    <div style={{fontSize:9,color:"#34d399",fontFamily:"var(--font-mono)"}}>{f$(mkt.topRep.net_vol)}</div>
-                  </div>
-                )}
-              </div>
             </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
-// ─── TRENDS TAB ──────────────────────────────────────────────────────────────
-function TrendsTab({r30Data,ytdData,history,onOpenScorecard}){
-  const trendRows=useMemo(()=>{
-    if(!r30Data||!ytdData)return[];
-    const rows=[];
-    for(const r30R of r30Data.reps.filter(r=>r.tier!=="⛔ Excluded"&&r.demo>=3)){
-      const ytdR=ytdData.reps.find(x=>x.rep===r30R.rep);
-      if(!ytdR)continue;
-      const sigs={};let composite=0;
-      for(const m of SIGNAL_METRICS){
-        const r30v=m.key==="_gap"?gapPts(r30R):r30R[m.key];
-        const ytdv=m.key==="_gap"?gapPts(ytdR):ytdR[m.key];
-        const sig=signal(r30v,ytdv,m.higherBetter);
-        sigs[m.key]={...sig,r30:r30v,ytd:ytdv};composite+=sig.s;
-      }
-      const rankDelta=(ytdR.rank==="-"||r30R.rank==="-")?null:ytdR.rank-r30R.rank;
-      rows.push({rep:r30R.rep,tier:r30R.tier,r30R,ytdR,sigs,composite,rankDelta});
-    }
-    rows.sort((a,b)=>b.composite-a.composite);
-    return rows;
-  },[r30Data,ytdData]);
-
-  const historyRows=useMemo(()=>{
-    const r30Snaps=history.filter(h=>h.win==="r30").sort((a,b)=>new Date(a.sdate||a.updated)-new Date(b.sdate||b.updated));
-    if(r30Snaps.length<2)return[];
-    const repNames=new Set(r30Snaps.flatMap(s=>s.reps?.map(r=>r.rep)||[]));
-    const rows=[];
-    for(const name of repNames){
-      const pts=r30Snaps.map(s=>{const r=s.reps?.find(x=>x.rep===name);return r?{date:s.sdate||s.updated,std:r.std_pct,net_vol:r.net_vol,score:r.score,fallout:r.fallout_rate}:null;}).filter(Boolean);
-      if(pts.length<2)continue;
-      const first=pts[0],last=pts[pts.length-1];
-      rows.push({rep:name,pts,first,last,stdDelta:last.std-first.std,volDelta:last.net_vol-first.net_vol,snapCount:pts.length});
-    }
-    rows.sort((a,b)=>b.stdDelta-a.stdDelta);
-    return rows;
-  },[history]);
-
-  const compositeLabel=c=>{
-    if(c>=8) return{text:"🔥 On Fire",    color:"#34d399"};
-    if(c>=4) return{text:"📈 Heating Up", color:"#86efac"};
-    if(c>=1) return{text:"↗ Improving",   color:"#94a3b8"};
-    if(c===0)return{text:"➡ Stable",      color:"#64748b"};
-    if(c>=-3)return{text:"↘ Softening",   color:"#fb923c"};
-    if(c>=-6)return{text:"📉 Slipping",   color:"#f87171"};
-    return{text:"❄ Cooling",color:"#38bdf8"};
-  };
-
-  const top5=trendRows.slice(0,5),bot5=[...trendRows].reverse().slice(0,5);
-
-  if(!r30Data||!ytdData){
-    return(
-      <div className="empty-state">
-        <div className="empty-icon">📊</div>
-        <div className="empty-title">Upload both R30 and YTD data</div>
-        <div className="empty-sub">Trends require two windows of data to compare</div>
-      </div>
-    );
-  }
-
-  return(
-    <div style={{padding:"18px 22px"}}>
-      {/* TOP/BOTTOM CARDS */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:24}}>
-        {/* HEATING UP */}
-        <div className="section-block" style={{margin:0}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
-            <span style={{fontSize:14}}>🔥</span>
-            <span style={{fontWeight:800,fontSize:13,color:"#34d399",fontFamily:"var(--font-display)",letterSpacing:".04em"}}>HEATING UP</span>
-            <span style={{fontSize:10,color:"var(--text-muted)",marginLeft:2}}>Top 5 by momentum</span>
-          </div>
-          {top5.map((r,i)=>{
-            const cl=compositeLabel(r.composite);
-            const stdDelta=r.r30R.std_pct-r.ytdR.std_pct,volDelta=r.r30R.net_vol-r.ytdR.net_vol;
-            return(
-              <div key={r.rep} onClick={()=>onOpenScorecard(r.rep)}
-                style={{padding:"10px 13px",borderRadius:"var(--radius)",cursor:"pointer",marginBottom:7,
-                  background:"var(--bg-elevated)",border:"1px solid var(--border)",transition:"all .15s"}}
-                onMouseEnter={e=>{e.currentTarget.style.borderColor="var(--border-strong)";e.currentTarget.style.background="var(--bg-hover)";}}
-                onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border)";e.currentTarget.style.background="var(--bg-elevated)";}}>
-                <div style={{display:"flex",alignItems:"center",gap:9,marginBottom:6}}>
-                  <span style={{fontSize:15,minWidth:22}}>{["🥇","🥈","🥉","🔥","🔥"][i]}</span>
-                  <div style={{flex:1}}>
-                    <div style={{fontWeight:700,fontSize:13,color:"var(--text-primary)"}}>{r.rep}</div>
-                    <div style={{fontSize:10,color:TC[r.tier]??"#64748b"}}>{r.tier}</div>
-                  </div>
-                  <div style={{textAlign:"right"}}>
-                    <div style={{color:cl.color,fontWeight:700,fontSize:11}}>{cl.text}</div>
-                    {r.rankDelta!=null&&<div style={{color:r.rankDelta>0?"#34d399":"#f87171",fontSize:10,fontWeight:700}}>{r.rankDelta>0?`▲${r.rankDelta} ranks`:`▼${Math.abs(r.rankDelta)} ranks`}</div>}
-                  </div>
-                </div>
-                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                  {stdDelta>0.02&&<span style={{color:"#34d399",background:"rgba(52,211,153,.1)",padding:"2px 7px",borderRadius:4,fontSize:10,fontWeight:600}}>STD% +{(stdDelta*100).toFixed(1)}pp</span>}
-                  {volDelta>0&&<span style={{color:"#38bdf8",background:"rgba(56,189,248,.1)",padding:"2px 7px",borderRadius:4,fontSize:10,fontWeight:600}}>Vol +{f$(volDelta)}</span>}
-                  {r.r30R.net_issue_rate>=.80&&<span style={{color:"#a78bfa",background:"rgba(167,139,250,.1)",padding:"2px 7px",borderRadius:4,fontSize:10}}>✓ Clean</span>}
-                </div>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
+                <span style={{fontSize:11,fontWeight:700,color:"#38bdf8",letterSpacing:".08em",fontFamily:"var(--font-display)"}}>📈 VS {snapWin==="r30"?"YTD":"R30"}</span>
+                <div style={{flex:1,height:1,background:"var(--border)"}}/>
               </div>
-            );
-          })}
-        </div>
-
-        {/* COOLING OFF */}
-        <div className="section-block" style={{margin:0}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
-            <span style={{fontSize:14}}>❄️</span>
-            <span style={{fontWeight:800,fontSize:13,color:"#38bdf8",fontFamily:"var(--font-display)",letterSpacing:".04em"}}>COOLING OFF</span>
-            <span style={{fontSize:10,color:"var(--text-muted)",marginLeft:2}}>Bottom 5 by momentum</span>
-          </div>
-          {bot5.map((r,i)=>{
-            const cl=compositeLabel(r.composite);
-            return(
-              <div key={r.rep} onClick={()=>onOpenScorecard(r.rep)}
-                style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:"var(--radius)",
-                  cursor:"pointer",marginBottom:7,background:"var(--bg-elevated)",border:"1px solid var(--border)",transition:"all .15s"}}
-                onMouseEnter={e=>{e.currentTarget.style.background="var(--bg-hover)";e.currentTarget.style.borderColor="var(--border-strong)";}}
-                onMouseLeave={e=>{e.currentTarget.style.background="var(--bg-elevated)";e.currentTarget.style.borderColor="var(--border)";}}>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:600,fontSize:13,color:"var(--text-primary)"}}>{r.rep}</div>
-                  <div style={{fontSize:10,color:TC[r.tier]??"#64748b"}}>{r.tier}</div>
+              {!detailData.deltas?(
+                <div style={{background:"var(--bg-elevated)",border:"1px solid var(--border)",borderRadius:"var(--radius)",padding:"18px 14px",fontSize:12,color:"var(--text-muted)",textAlign:"center"}}>
+                  No comparison window available for this market.
                 </div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{color:cl.color,fontWeight:700,fontSize:12}}>{cl.text}</div>
-                  <div style={{fontSize:10,color:"var(--text-faint)",fontFamily:"var(--font-mono)"}}>Score {r.composite>0?"+":""}{r.composite}</div>
-                </div>
-                {r.rankDelta!=null&&(
-                  <div style={{color:r.rankDelta>0?"#34d399":r.rankDelta<0?"#f87171":"#64748b",fontWeight:700,fontSize:12,minWidth:34,textAlign:"right"}}>
-                    {r.rankDelta>0?`▲${r.rankDelta}`:r.rankDelta<0?`▼${Math.abs(r.rankDelta)}`:"—"}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* HISTORICAL TRAJECTORIES */}
-      {historyRows.length>0&&(
-        <div style={{marginBottom:24}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
-            <span style={{fontWeight:700,fontSize:13,color:"#a78bfa",fontFamily:"var(--font-display)"}}>📈 HISTORICAL TRAJECTORY</span>
-            <span style={{fontSize:10,color:"var(--text-muted)"}}>{history.filter(h=>h.win==="r30").length} R30 snapshots</span>
-          </div>
-          <div style={{overflowX:"auto",borderRadius:"var(--radius-lg)",border:"1px solid var(--border)"}}>
-            <table className="rank-table">
-              <thead>
-                <tr>
-                  {["Rep","Tier","STD% Trend","Net Vol Trend","Score Trend","Snapshots","STD% Δ","Net Vol Δ"].map(l=>(
-                    <th key={l} style={{cursor:"default"}}>{l}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {historyRows.slice(0,20).map((r,i)=>(
-                  <tr key={r.rep} onClick={()=>onOpenScorecard(r.rep)} className="clickable-row" style={{cursor:"pointer"}}>
-                    <td style={{fontWeight:600,color:"var(--text-primary)",whiteSpace:"nowrap"}}>{r.rep}</td>
-                    <td><span className="tier-pill" style={{background:`${TC[r30Data.reps.find(x=>x.rep===r.rep)?.tier]??"#64748b"}18`,color:TC[r30Data.reps.find(x=>x.rep===r.rep)?.tier]??"#64748b"}}>{r30Data.reps.find(x=>x.rep===r.rep)?.tier??"—"}</span></td>
-                    <td><Sparkline points={r.pts.map(p=>({v:p.std}))} color="#6366f1" width={90}/></td>
-                    <td><Sparkline points={r.pts.map(p=>({v:p.net_vol}))} color="#38bdf8" width={90}/></td>
-                    <td><Sparkline points={r.pts.map(p=>({v:p.score}))} color="#fbbf24" width={90}/></td>
-                    <td style={{textAlign:"center"}}>{r.snapCount}</td>
-                    <td style={{color:r.stdDelta>0?"#34d399":"#f87171",fontWeight:700,fontFamily:"var(--font-mono)"}}>{r.stdDelta>0?"+":""}{(r.stdDelta*100).toFixed(1)}pp</td>
-                    <td style={{color:r.volDelta>0?"#34d399":"#f87171",fontWeight:700,fontFamily:"var(--font-mono)"}}>{r.volDelta>0?"+":""}{f$(r.volDelta)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* FULL TREND TABLE */}
-      <div>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
-          <span style={{fontWeight:700,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>📊 FULL MOMENTUM TABLE</span>
-          <span style={{fontSize:10,color:"var(--text-muted)"}}>{trendRows.length} reps</span>
-        </div>
-        <div style={{overflowX:"auto",borderRadius:"var(--radius-lg)",border:"1px solid var(--border)"}}>
-          <table className="rank-table">
-            <thead>
-              <tr>
-                <th>Rep</th><th>Tier</th><th style={{color:"#94a3b8"}}>Momentum</th>
-                <th style={{color:"#94a3b8"}}>Score</th>
-                <th style={{color:"#6366f1"}}>STD%</th><th style={{color:"#38bdf8"}}>OTD%</th>
-                <th style={{color:"#34d399"}}>Net Vol</th><th style={{color:"#fbbf24"}}>Avg Deal</th>
-                <th style={{color:"#86efac"}}>NetStk%</th><th style={{color:"#fb923c"}}>Fallout%</th>
-                <th style={{color:"#fbbf24"}}>OTD↔STD</th><th style={{color:"#94a3b8"}}>Rank Δ</th>
-              </tr>
-            </thead>
-            <tbody>
-              {trendRows.map((row,i)=>{
-                const cl=compositeLabel(row.composite);
-                const SigCell=({mKey,fmt})=>{
-                  const s=row.sigs[mKey];if(!s)return<td>—</td>;
-                  return(
-                    <td>
-                      <div style={{color:s.color,fontSize:11}}>
-                        <span style={{opacity:.5,fontSize:10,fontFamily:"var(--font-mono)"}}>{fmt?fmt(s.ytd):s.ytd} </span>
-                        <span style={{fontWeight:700,fontFamily:"var(--font-mono)"}}>{s.icon} {fmt?fmt(s.r30):s.r30}</span>
-                      </div>
-                    </td>
-                  );
-                };
-                return(
-                  <tr key={row.rep} onClick={()=>onOpenScorecard(row.rep)} className="clickable-row" style={{cursor:"pointer"}}>
-                    <td style={{fontWeight:600,color:"var(--text-primary)",whiteSpace:"nowrap"}}>{row.rep}</td>
-                    <td><span className="tier-pill" style={{background:`${TC[row.tier]??"#64748b"}18`,color:TC[row.tier]??"#64748b"}}>{row.tier}</span></td>
-                    <td><span style={{color:cl.color,fontWeight:700,fontSize:11}}>{cl.text}</span></td>
-                    <td>
-                      <div style={{fontSize:10}}>
-                        <span style={{color:"var(--text-faint)",fontFamily:"var(--font-mono)"}}>{row.ytdR.score?.toFixed(3)} </span>
-                        <span style={{color:row.sigs.std_pct?.s>=0?"#34d399":"#f87171",fontWeight:700,fontFamily:"var(--font-mono)"}}>→ {row.r30R.score?.toFixed(3)}</span>
-                      </div>
-                    </td>
-                    <SigCell mKey="std_pct" fmt={fP}/>
-                    <SigCell mKey="otd_pct" fmt={fP}/>
-                    <SigCell mKey="net_vol" fmt={fK}/>
-                    <SigCell mKey="avg_deal" fmt={fK}/>
-                    <SigCell mKey="net_issue_rate" fmt={fP}/>
-                    <SigCell mKey="fallout_rate" fmt={fP}/>
-                    <SigCell mKey="_gap" fmt={v=>`${v}pp`}/>
-                    <td>
-                      {row.rankDelta!=null?(
-                        <span style={{color:row.rankDelta>0?"#34d399":row.rankDelta<0?"#f87171":"#64748b",fontWeight:700,fontFamily:"var(--font-mono)"}}>
-                          {row.rankDelta>0?`▲${row.rankDelta}`:row.rankDelta<0?`▼${Math.abs(row.rankDelta)}`:"—"}
-                        </span>
-                      ):"—"}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── COMPARISON TOOL ─────────────────────────────────────────────────────────
-function ComparisonTool({r30Data,ytdData,markets,marketList}){
-  const [mode,setMode]=useState("rep");
-  const [selectedReps,setSelectedReps]=useState([]);
-  const [selectedMarkets,setSelectedMarkets]=useState([]);
-  const [dataWin,setDataWin]=useState("r30");
-
-  const srcData=dataWin==="r30"?r30Data:ytdData;
-  const activeReps=useMemo(()=>(srcData?.reps||[]).filter(r=>r.tier!=="⛔ Excluded"&&markets[r.rep]!=="⛔ Terminated"),[srcData,markets]);
-
-  const marketData=useMemo(()=>{
-    if(!srcData||!marketList.length)return{};
-    const result={};
-    for(const mkt of marketList){
-      const reps=activeReps.filter(r=>markets[r.rep]===mkt);
-      if(!reps.length)continue;
-      const sum=f=>reps.reduce((a,r)=>a+(r[f]??0),0);
-      const avg=f=>sum(f)/reps.length;
-      const totalGross=sum("gross_iss"),totalCloses=sum("otd_cnt"),totalNetVol=sum("net_vol");
-      const totalCloseVol=sum("close_vol"),totalNetCloses=sum("num_net");
-      const totalCancel=sum("cancel_cnt"),totalHold=sum("hold_cnt"),totalCrDecl=sum("crdecline_cnt"),totalNsli=sum("nsli");
-      const per100=f=>totalGross>0?(sum(f)/totalGross)*100:0;
-      result[mkt]={
-        name:mkt,repCount:reps.length,totalGross,totalCloses,totalNetVol,totalCloseVol,totalNetCloses,
-        totalCancel,totalHold,totalCrDecl,totalNsli,
-        otd_pct:totalGross>0?totalCloses/totalGross:0,
-        std_pct:sum("demo")>0?totalCloses/sum("demo"):0,
-        netstk_pct:totalCloses>0?totalNetCloses/totalCloses:0,
-        fallout_rate:totalCloses>0?(totalCancel*0.65+totalHold*0.25+totalCrDecl*0.10)/totalCloses:0,
-        avg_deal:totalCloses>0?totalCloseVol/totalCloses:0,
-        avg_net_vol_per_rep:totalNetVol/reps.length,
-        nsli_per_close:totalCloses>0?totalNsli/totalCloses:0,
-        norm_net_vol:per100("net_vol"),norm_closes:totalGross>0?(totalCloses/totalGross)*100:0,
-        norm_nsli:per100("nsli"),avg_score:avg("score"),
-        elite_pct:reps.filter(r=>r.tier==="🥇 Elite").length/reps.length,reps,
-      };
-    }
-    return result;
-  },[srcData,activeReps,markets,marketList]);
-
-  const toggleRep=rep=>{setSelectedReps(prev=>prev.includes(rep)?prev.filter(r=>r!==rep):prev.length<4?[...prev,rep]:prev);};
-  const toggleMarket=m=>{setSelectedMarkets(prev=>prev.includes(m)?prev.filter(x=>x!==m):prev.length<4?[...prev,m]:prev);};
-
-  const REP_METRICS=[
-    {key:"nsli",label:"NSLI/NCP $",fmt:v=>"$"+Math.round(v).toLocaleString(),get:r=>r.nsli,higherBetter:true},
-    {key:"otd_pct",label:"OTD%",fmt:v=>(v*100).toFixed(1)+"%",get:r=>r.otd_pct,higherBetter:true},
-    {key:"std_pct",label:"STD%",fmt:v=>(v*100).toFixed(1)+"%",get:r=>r.std_pct,higherBetter:true},
-    {key:"net_issue_rate",label:"NetStk%",fmt:v=>(v*100).toFixed(1)+"%",get:r=>r.net_issue_rate,higherBetter:true,breakdown:true},
-    {key:"net_vol",label:"Net Volume",fmt:v=>"$"+Math.round(v).toLocaleString(),get:r=>r.net_vol,higherBetter:true},
-    {key:"avg_deal",label:"Avg Deal",fmt:v=>"$"+Math.round(v).toLocaleString(),get:r=>r.avg_deal,higherBetter:true},
-    {key:"fallout_rate",label:"Wtd Fallout%",fmt:v=>(v*100).toFixed(1)+"%",get:r=>r.fallout_rate,higherBetter:false},
-    {key:"score",label:"Overall Score",fmt:v=>v?.toFixed(4),get:r=>r.score,higherBetter:true},
-  ];
-  const MKT_METRICS=[
-    {key:"totalNetVol",label:"Total Net Vol",fmt:v=>"$"+Math.round(v).toLocaleString(),higherBetter:true},
-    {key:"norm_net_vol",label:"Net Vol per 100 Appts",fmt:v=>"$"+Math.round(v).toLocaleString(),higherBetter:true},
-    {key:"netstk_pct",label:"NetStk%",fmt:v=>(v*100).toFixed(1)+"%",higherBetter:true,breakdown:true},
-    {key:"otd_pct",label:"OTD%",fmt:v=>(v*100).toFixed(1)+"%",higherBetter:true},
-    {key:"std_pct",label:"STD%",fmt:v=>(v*100).toFixed(1)+"%",higherBetter:true},
-    {key:"fallout_rate",label:"Wtd Fallout%",fmt:v=>(v*100).toFixed(1)+"%",higherBetter:false},
-    {key:"avg_deal",label:"Avg Deal Size",fmt:v=>"$"+Math.round(v).toLocaleString(),higherBetter:true},
-    {key:"totalNsli",label:"Total NSLI/NCP",fmt:v=>"$"+Math.round(v).toLocaleString(),higherBetter:true},
-    {key:"nsli_per_close",label:"NSLI per Close",fmt:v=>"$"+Math.round(v).toLocaleString(),higherBetter:true},
-    {key:"avg_score",label:"Avg Rep Score",fmt:v=>v?.toFixed(4),higherBetter:true},
-    {key:"elite_pct",label:"Elite Rep %",fmt:v=>(v*100).toFixed(0)+"%",higherBetter:true},
-    {key:"repCount",label:"Active Reps",fmt:v=>v,higherBetter:false},
-    {key:"totalGross",label:"Total Gross Issued",fmt:v=>v,higherBetter:false},
-  ];
-  const COLORS=["#38bdf8","#fbbf24","#34d399","#f87171"];
-  const selectedItems=mode==="rep"?selectedReps:selectedMarkets;
-  const metrics=mode==="rep"?REP_METRICS:MKT_METRICS;
-  const getData=item=>mode==="rep"?activeReps.find(r=>r.rep===item):marketData[item];
-
-  const CompBar=({values,fmt,higherBetter,label,note,breakdowns})=>{
-    const nums=values.map(v=>typeof v==="number"?v:0);
-    const maxV=Math.max(...nums,0.001);
-    const best=higherBetter?Math.max(...nums):Math.min(...nums.filter(v=>v>0));
-    return(
-      <div style={{marginBottom:12,padding:"12px 16px",background:"var(--bg-elevated)",borderRadius:"var(--radius)",border:"1px solid var(--border)"}}>
-        <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-          <span style={{fontSize:11,color:"var(--text-secondary)",fontWeight:600}}>{label}</span>
-          {note&&<span style={{fontSize:9,color:"var(--text-muted)",maxWidth:200,textAlign:"right"}}>{note}</span>}
-        </div>
-        {values.map((v,i)=>{
-          if(v==null)return null;
-          const pct=maxV>0?Math.max(4,(v/maxV)*100):4;
-          const isBest=v===best&&v>0;
-          const bd=breakdowns?.[i];
-          return(
-            <div key={i} style={{marginTop:7}}>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <div style={{width:8,height:8,borderRadius:"50%",background:COLORS[i],flexShrink:0}}/>
-                <div style={{flex:1,height:16,background:"var(--bg-base)",borderRadius:3,overflow:"hidden",position:"relative"}}>
-                  <div style={{position:"absolute",left:0,top:0,height:"100%",width:`${pct}%`,background:COLORS[i],opacity:.75,borderRadius:3,transition:"width .4s ease"}}/>
-                </div>
-                <span style={{fontSize:12,color:isBest?COLORS[i]:"var(--text-secondary)",fontWeight:isBest?800:400,minWidth:95,textAlign:"right",fontFamily:"var(--font-mono)"}}>
-                  {fmt?fmt(v):v}{isBest&&" ★"}
-                </span>
-              </div>
-              {bd&&(
-                <div style={{marginLeft:16,marginTop:4,display:"flex",gap:8,flexWrap:"wrap"}}>
-                  {bd.cancel!=null&&<span style={{fontSize:9,color:"#f87171"}}>⛔ Cxl {(bd.cancel*100).toFixed(1)}%</span>}
-                  {bd.hold!=null&&<span style={{fontSize:9,color:"#fbbf24"}}>⏸ Hold {(bd.hold*100).toFixed(1)}%</span>}
-                  {bd.crdecl!=null&&<span style={{fontSize:9,color:"#a78bfa"}}>❌ Decl {(bd.crdecl*100).toFixed(1)}%</span>}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-
-  return(
-    <div style={{padding:"18px 22px"}}>
-      <div style={{marginBottom:18}}>
-        <div style={{fontWeight:800,fontSize:15,color:"var(--text-primary)",fontFamily:"var(--font-display)",marginBottom:4}}>⚖ Comparison Tool</div>
-        <div style={{fontSize:12,color:"var(--text-muted)"}}>Select up to 4 reps or markets for side-by-side analysis</div>
-      </div>
-
-      <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
-        <div className="seg-control">
-          {[["rep","👤 Rep vs Rep"],["market","🗺 Market vs Market"]].map(([m,l])=>(
-            <button key={m} className={`seg-btn${mode===m?" active":""}`} onClick={()=>{setMode(m);setSelectedReps([]);setSelectedMarkets([]);}}>{l}</button>
-          ))}
-        </div>
-        <div className="seg-control" style={{marginLeft:"auto"}}>
-          {["r30","ytd"].map(w=>(
-            <button key={w} className={`seg-btn${dataWin===w?" active":""}`} onClick={()=>setDataWin(w)}>{w==="r30"?"R30":"YTD"}</button>
-          ))}
-        </div>
-      </div>
-
-      <div className="section-block" style={{marginBottom:16}}>
-        <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".07em",marginBottom:10,textTransform:"uppercase",fontWeight:700}}>
-          {mode==="rep"?`Select Reps (${selectedReps.length}/4)`:`Select Markets (${selectedMarkets.length}/4)`}
-        </div>
-        {mode==="rep"?(
-          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-            {activeReps.sort((a,b)=>a.rep.localeCompare(b.rep)).map(r=>{
-              const sel=selectedReps.includes(r.rep),idx=selectedReps.indexOf(r.rep);
-              return(
-                <button key={r.rep} onClick={()=>toggleRep(r.rep)} disabled={!sel&&selectedReps.length>=4}
-                  style={{padding:"5px 11px",borderRadius:20,fontFamily:"inherit",cursor:"pointer",fontSize:11,
-                    border:`1.5px solid ${sel?COLORS[idx]:"var(--border)"}`,
-                    background:sel?`${COLORS[idx]}18`:"transparent",
-                    color:sel?COLORS[idx]:"var(--text-secondary)",
-                    opacity:(!sel&&selectedReps.length>=4)?.35:1,transition:"all .15s"}}>
-                  {sel&&<span style={{marginRight:4,fontWeight:800}}>#{idx+1}</span>}
-                  {r.rep}
-                  <span style={{marginLeft:5,fontSize:9,color:TC[r.tier]??"#64748b"}}>{r.tier?.split(" ")[0]}</span>
-                </button>
-              );
-            })}
-          </div>
-        ):(
-          <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-            {marketList.filter(m=>marketData[m]).map(m=>{
-              const sel=selectedMarkets.includes(m),idx=selectedMarkets.indexOf(m),md=marketData[m];
-              return(
-                <button key={m} onClick={()=>toggleMarket(m)} disabled={!sel&&selectedMarkets.length>=4}
-                  style={{padding:"8px 14px",borderRadius:"var(--radius)",fontFamily:"inherit",cursor:"pointer",
-                    border:`1.5px solid ${sel?COLORS[idx]:"var(--border)"}`,
-                    background:sel?`${COLORS[idx]}18`:"transparent",
-                    color:sel?COLORS[idx]:"var(--text-secondary)",fontSize:12,textAlign:"left",
-                    opacity:(!sel&&selectedMarkets.length>=4)?.35:1,transition:"all .15s"}}>
-                  {sel&&<span style={{marginRight:4,fontWeight:800}}>#{idx+1}</span>}
-                  <span style={{fontWeight:600}}>{m}</span>
-                  {md&&<span style={{marginLeft:8,fontSize:10,color:"var(--text-muted)"}}>{md.repCount} reps · {md.totalGross} appts</span>}
-                </button>
-              );
-            })}
-            {!marketList.length&&<div style={{color:"var(--text-muted)",fontSize:12}}>No markets assigned yet.</div>}
-          </div>
-        )}
-      </div>
-
-      {selectedItems.length>0&&(
-        <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
-          {selectedItems.map((item,i)=>{
-            const d=getData(item);
-            return(
-              <div key={item} style={{display:"flex",alignItems:"center",gap:9,background:"var(--bg-surface)",border:`1px solid ${COLORS[i]}33`,borderRadius:"var(--radius)",padding:"9px 14px"}}>
-                <div style={{width:10,height:10,borderRadius:"50%",background:COLORS[i]}}/>
-                <div>
-                  <div style={{fontSize:12,fontWeight:700,color:COLORS[i]}}>{item}</div>
-                  {mode==="rep"&&d&&<div style={{fontSize:10,color:"var(--text-muted)"}}>{d.tier} · Rank #{d.rank} · Score {d.score?.toFixed(3)}</div>}
-                  {mode==="market"&&d&&<div style={{fontSize:10,color:"var(--text-muted)"}}>{d.repCount} reps · {d.totalGross} gross issued</div>}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {mode==="market"&&selectedItems.length>=2&&(
-        <div style={{background:"rgba(56,189,248,.05)",border:"1px solid rgba(56,189,248,.15)",borderRadius:"var(--radius)",padding:"10px 14px",marginBottom:14,fontSize:12,color:"#38bdf8",lineHeight:1.6}}>
-          <strong>Volume context:</strong> Use <strong>Net Vol per 100 Appts</strong> for a fair normalized comparison.
-        </div>
-      )}
-
-      {selectedItems.length>=2?(
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:10}}>
-          {metrics.map(m=>{
-            const values=selectedItems.map(item=>{const d=getData(item);return d?m.get?m.get(d):d[m.key]:null;});
-            if(values.every(v=>!v&&v!==0))return null;
-            let breakdowns=null;
-            if(m.breakdown){
-              breakdowns=selectedItems.map(item=>{
-                const d=getData(item);if(!d)return null;
-                if(mode==="rep"){return{cancel:d.cancel_rate,hold:d.hold_rate,crdecl:d.crdecl_rate};}
-                else{return{cancel:d.totalCloses>0?d.totalCancel/d.totalCloses:0,hold:d.totalCloses>0?d.totalHold/d.totalCloses:0,crdecl:d.totalCloses>0?d.totalCrDecl/d.totalCloses:0};}
-              });
-            }
-            return<CompBar key={m.key} values={values} fmt={m.fmt} higherBetter={m.higherBetter!==false} label={m.label} note={m.note} breakdowns={breakdowns}/>;
-          })}
-        </div>
-      ):(
-        <div style={{textAlign:"center",color:"var(--text-muted)",padding:"48px 0",fontSize:13}}>
-          {selectedItems.length===0?"Select at least 2 items above to compare":"Select one more to start comparing"}
-        </div>
-      )}
-
-      {/* VOLUME NORMALIZED (rep mode) */}
-      {mode==="rep"&&selectedItems.length>=2&&(()=>{
-        const maxGross=Math.max(...selectedItems.map(rep=>{const d=activeReps.find(r=>r.rep===rep);return d?.gross_iss||0;}));
-        return(
-          <div style={{marginTop:20}}>
-            <div className="section-block" style={{marginBottom:14}}>
-              <div style={{fontWeight:700,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)",marginBottom:12}}>📐 Volume-Normalized — per 100 gross issued</div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:10}}>
-                {[
-                  {label:"Net Vol per 100 Appts",key:"norm_net_vol",fmt:v=>"$"+Math.round(v).toLocaleString()},
-                  {label:"Closes per 100 Appts",key:"norm_closes",fmt:v=>v.toFixed(1)},
-                  {label:"NSLI per 100 Appts",key:"norm_nsli",fmt:v=>"$"+Math.round(v).toLocaleString()},
-                  {label:"Net Closes per 100 Appts",key:"norm_net_closes",fmt:v=>v.toFixed(1)},
-                ].map(m=>{
-                  const values=selectedItems.map(rep=>{
-                    const d=activeReps.find(r=>r.rep===rep);if(!d||!d.gross_iss)return null;
-                    const per100=f=>(d[f]/d.gross_iss)*100;
-                    if(m.key==="norm_net_vol")return per100("net_vol");
-                    if(m.key==="norm_closes")return per100("otd_cnt");
-                    if(m.key==="norm_nsli")return per100("nsli");
-                    if(m.key==="norm_net_closes")return per100("num_net");
-                    return null;
-                  });
-                  const maxV=Math.max(...values.filter(v=>v!=null),0.001),best=Math.max(...values.filter(v=>v!=null));
-                  return(
-                    <div key={m.key} style={{background:"var(--bg-elevated)",borderRadius:"var(--radius)",padding:"12px 14px",border:"1px solid var(--border)"}}>
-                      <div style={{fontSize:11,color:"var(--text-secondary)",fontWeight:600,marginBottom:10}}>{m.label}</div>
-                      {values.map((v,i)=>{
-                        if(v==null)return null;
-                        const pct=Math.max(4,(v/maxV)*100),isBest=v===best&&v>0;
-                        const rep=selectedItems[i];
-                        return(
-                          <div key={i} style={{marginBottom:8}}>
-                            <div style={{display:"flex",justifyContent:"space-between",fontSize:10,marginBottom:3}}>
-                              <span style={{color:COLORS[i]}}>{rep.split(",")[0]}</span>
-                              <span style={{color:isBest?COLORS[i]:"var(--text-muted)",fontWeight:isBest?800:400,fontFamily:"var(--font-mono)"}}>{m.fmt(v)}{isBest?" ★":""}</span>
-                            </div>
-                            <div style={{height:6,background:"var(--bg-base)",borderRadius:3,overflow:"hidden"}}>
-                              <div style={{height:"100%",width:`${pct}%`,background:COLORS[i],opacity:.75,borderRadius:3,transition:"width .4s ease"}}/>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* LEAD RECOMMENDATION */}
-      {mode==="rep"&&selectedItems.length===2&&(()=>{
-        const dA=activeReps.find(r=>r.rep===selectedItems[0]),dB=activeReps.find(r=>r.rep===selectedItems[1]);
-        if(!dA||!dB)return null;
-        const teamAvgObj={
-          net_vol:activeReps.reduce((a,r)=>a+r.net_vol,0)/activeReps.length,
-          std_pct:activeReps.reduce((a,r)=>a+r.std_pct,0)/activeReps.length,
-          net_issue_rate:activeReps.reduce((a,r)=>a+r.net_issue_rate,0)/activeReps.length,
-          fallout_rate:activeReps.reduce((a,r)=>a+r.fallout_rate,0)/activeReps.length,
-          avg_deal:activeReps.reduce((a,r)=>a+r.avg_deal,0)/activeReps.length,
-        };
-        const rec=generateLeadRecommendation(selectedItems[0],dA,selectedItems[1],dB,teamAvgObj);
-        const confColor=rec.confidence==="Strong"?"#34d399":rec.confidence==="Moderate"?"#fbbf24":"#94a3b8";
-        const winnerIdx=selectedItems.indexOf(rec.winner),winnerColor=rec.winner?COLORS[winnerIdx]:"#94a3b8";
-        return(
-          <div style={{marginTop:18,background:"var(--bg-surface)",border:`1px solid ${winnerColor}33`,borderRadius:"var(--radius-lg)",padding:22,position:"relative",overflow:"hidden"}}>
-            <div style={{position:"absolute",inset:0,background:`linear-gradient(135deg,${winnerColor}05 0%,transparent 60%)`,pointerEvents:"none"}}/>
-            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
-              <span style={{fontSize:22}}>🎯</span>
-              <div>
-                <div style={{fontWeight:800,fontSize:15,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>Lead Recommendation</div>
-                <div style={{fontSize:11,color:"var(--text-muted)",marginTop:2}}>Weighted toward netting business: close rate + stick rate + fallout</div>
-              </div>
-            </div>
-            {rec.winner?(
-              <>
-                <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16,padding:"16px 18px",background:`${winnerColor}0e`,border:`1px solid ${winnerColor}25`,borderRadius:"var(--radius)"}}>
-                  <div style={{fontSize:32}}>🏆</div>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".07em",marginBottom:2,textTransform:"uppercase"}}>Give the next lead to</div>
-                    <div style={{fontWeight:900,fontSize:22,color:winnerColor,fontFamily:"var(--font-display)"}}>{rec.winner}</div>
-                    <div style={{fontSize:11,color:"var(--text-muted)",marginTop:2}}>{activeReps.find(r=>r.rep===rec.winner)?.tier} · Score {activeReps.find(r=>r.rep===rec.winner)?.score?.toFixed(4)}</div>
-                  </div>
-                  <div style={{textAlign:"right"}}>
-                    <div style={{fontSize:10,color:"var(--text-muted)",marginBottom:3}}>Confidence</div>
-                    <div style={{fontWeight:800,fontSize:14,color:confColor}}>{rec.confidence}</div>
-                    <div style={{fontSize:10,color:"var(--text-muted)",marginTop:3}}>Score gap: {Math.abs(rec.ptsA-rec.ptsB)} pts</div>
-                  </div>
-                </div>
-                <div style={{marginBottom:12}}>
-                  <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".07em",marginBottom:8,fontWeight:700,textTransform:"uppercase"}}>Why this rep?</div>
-                  {rec.reasons.map((reason,i)=>(
-                    <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start",background:"rgba(255,255,255,.03)",borderRadius:"var(--radius-sm)",padding:"9px 13px",border:"1px solid var(--border)",marginBottom:6}}>
-                      <span style={{color:winnerColor,fontWeight:800,fontSize:13,flexShrink:0}}>→</span>
-                      <span style={{fontSize:12,color:"var(--text-secondary)",lineHeight:1.6}}>{reason}</span>
-                    </div>
-                  ))}
-                </div>
-                <div style={{fontSize:10,color:"var(--text-muted)",padding:"9px 12px",background:"var(--bg-base)",borderRadius:"var(--radius-sm)",border:"1px solid var(--border)",lineHeight:1.6}}>
-                  ⚖ Data-driven signal only. Does not account for availability, territory, or recent wins.
-                </div>
-              </>
-            ):(
-              <div style={{textAlign:"center",padding:"20px 0",color:"var(--text-muted)",fontSize:13}}>{rec.reasons[0]}</div>
-            )}
-          </div>
-        );
-      })()}
-    </div>
-  );
-}
-
-// ─── MARKET MANAGER ──────────────────────────────────────────────────────────
-function MarketManager({r30Data,ytdData,markets,marketList,onSave}){
-  const [assignments,setAssignments]=useState({...markets});
-  const [list,setList]=useState([...marketList]);
-  const [newMarket,setNewMarket]=useState("");
-  const [saving,setSaving]=useState(false);
-  const [saved,setSaved]=useState(false);
-
-  const allReps=useMemo(()=>{
-    const seen=new Set();const reps=[];
-    for(const r of [...(r30Data?.reps||[]),...(ytdData?.reps||[])].filter(x=>x.tier!=="⛔ Excluded")){
-      if(!seen.has(r.rep)){seen.add(r.rep);reps.push(r.rep);}
-    }
-    return reps.sort();
-  },[r30Data,ytdData]);
-
-  const addMarket=()=>{const m=newMarket.trim();if(!m||list.includes(m))return;setList(prev=>[...prev,m].sort());setNewMarket("");};
-  const toggleTerminated=(rep)=>{setAssignments(prev=>{const next={...prev};if(next[rep]==="⛔ Terminated")delete next[rep];else next[rep]="⛔ Terminated";return next;});};
-  const removeMarket=m=>{setList(prev=>prev.filter(x=>x!==m));setAssignments(prev=>{const next={...prev};Object.keys(next).forEach(k=>{if(next[k]===m)delete next[k];});return next;});};
-  const assign=(rep,market)=>{setAssignments(prev=>({...prev,[rep]:market||undefined}));};
-  const save=async()=>{setSaving(true);await db.set("markets",{assignments,list});onSave(assignments,list);setSaving(false);setSaved(true);setTimeout(()=>setSaved(false),2000);};
-
-  const byMarket={};
-  list.forEach(m=>{byMarket[m]=[];});
-  byMarket["Unassigned"]=[];byMarket["⛔ Terminated"]=[];
-  allReps.forEach(rep=>{
-    const m=assignments[rep];
-    if(m==="⛔ Terminated")byMarket["⛔ Terminated"].push(rep);
-    else if(m&&byMarket[m])byMarket[m].push(rep);
-    else byMarket["Unassigned"].push(rep);
-  });
-
-  const inpStyle={background:"var(--bg-elevated)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 12px",color:"var(--text-primary)",fontSize:12,fontFamily:"inherit",outline:"none",width:"100%",transition:"border-color .15s"};
-
-  return(
-    <div style={{padding:"18px 22px"}}>
-      <div style={{marginBottom:20}}>
-        <div style={{fontWeight:800,fontSize:15,color:"#fbbf24",fontFamily:"var(--font-display)",marginBottom:4}}>🗺 Market Manager</div>
-        <div style={{fontSize:12,color:"var(--text-muted)"}}>Assign each rep to their market. Changes save instantly.</div>
-      </div>
-      <div style={{display:"flex",gap:8,marginBottom:20,alignItems:"center"}}>
-        <input value={newMarket} onChange={e=>setNewMarket(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addMarket()} placeholder="New market name..." style={{...inpStyle,width:220}}/>
-        <button onClick={addMarket} className="btn-primary">+ Add</button>
-        <button onClick={save} disabled={saving} style={{marginLeft:"auto",padding:"8px 20px",background:saved?"#34d399":"linear-gradient(135deg,#0ea5e9,#6366f1)",border:"none",borderRadius:"var(--radius-sm)",color:saved?"#000":"#fff",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{saving?"Saving…":saved?"✓ Saved":"Save Changes"}</button>
-      </div>
-
-      {list.length>0&&(
-        <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:20}}>
-          {list.map(m=>(
-            <div key={m} style={{display:"flex",alignItems:"center",gap:6,background:"var(--bg-surface)",border:"1px solid rgba(251,191,36,.3)",borderRadius:20,padding:"5px 12px",fontSize:12}}>
-              <span style={{color:"#fbbf24",fontWeight:600}}>{m}</span>
-              <span style={{color:"var(--text-muted)",fontSize:11}}>({byMarket[m]?.length||0})</span>
-              <button onClick={()=>removeMarket(m)} style={{background:"none",border:"none",color:"var(--text-muted)",cursor:"pointer",fontSize:14,lineHeight:1}}>×</button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:12}}>
-        {byMarket["Unassigned"]?.length>0&&(
-          <div className="section-block" style={{gridColumn:"1/-1"}}>
-            <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".07em",marginBottom:12,fontWeight:700,textTransform:"uppercase"}}>Unassigned ({byMarket["Unassigned"].length} reps)</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:6}}>
-              {byMarket["Unassigned"].map(rep=>(
-                <div key={rep} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:"var(--bg-elevated)",borderRadius:"var(--radius-sm)",border:"1px solid var(--border)"}}>
-                  <span style={{flex:1,fontSize:12,color:"var(--text-secondary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{rep}</span>
-                  <select value={assignments[rep]||""} onChange={e=>assign(rep,e.target.value)}
-                    style={{background:"var(--bg-base)",border:"1px solid var(--border)",borderRadius:4,padding:"4px 8px",color:"var(--text-primary)",fontSize:11,fontFamily:"inherit",cursor:"pointer"}}>
-                    <option value="">— assign —</option>
-                    {list.map(m=><option key={m} value={m}>{m}</option>)}
-                  </select>
-                  <button onClick={()=>toggleTerminated(rep)} style={{background:"var(--red-dim)",border:"1px solid rgba(248,113,113,.3)",borderRadius:4,padding:"4px 7px",color:"#f87171",cursor:"pointer",fontSize:10,fontWeight:700,fontFamily:"inherit"}}>⛔</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        {list.map(m=>(
-          byMarket[m]?.length>0&&(
-            <div key={m} className="section-block" style={{border:"1px solid rgba(251,191,36,.2)"}}>
-              <div style={{fontSize:11,color:"#fbbf24",letterSpacing:".07em",marginBottom:12,fontWeight:700,textTransform:"uppercase"}}>{m} ({byMarket[m].length})</div>
-              {byMarket[m].map(rep=>{
-                const repData=(r30Data?.reps||ytdData?.reps||[]).find(x=>x.rep===rep);
-                return(
-                  <div key={rep} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 10px",background:"var(--bg-elevated)",borderRadius:"var(--radius-sm)",marginBottom:5,border:"1px solid var(--border)"}}>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:12,color:"var(--text-primary)",fontWeight:600}}>{rep}</div>
-                      {repData&&<div style={{fontSize:10,color:TC[repData.tier]??"#64748b"}}>{repData.tier} · #{repData.rank}</div>}
-                    </div>
-                    <select value={assignments[rep]||""} onChange={e=>assign(rep,e.target.value)}
-                      style={{background:"var(--bg-base)",border:"1px solid var(--border)",borderRadius:4,padding:"4px 8px",color:"var(--text-primary)",fontSize:11,fontFamily:"inherit",cursor:"pointer"}}>
-                      <option value="">— unassign —</option>
-                      {list.map(mk=><option key={mk} value={mk}>{mk}</option>)}
-                    </select>
-                    <button onClick={()=>toggleTerminated(rep)} style={{background:"var(--red-dim)",border:"1px solid rgba(248,113,113,.3)",borderRadius:4,padding:"4px 7px",color:"#f87171",cursor:"pointer",fontSize:10,fontFamily:"inherit"}}>⛔</button>
-                  </div>
-                );
-              })}
-            </div>
-          )
-        ))}
-      </div>
-      {byMarket["⛔ Terminated"]?.length>0&&(
-        <div className="section-block" style={{marginTop:8,border:"1px solid rgba(248,113,113,.15)"}}>
-          <div style={{fontSize:11,color:"#f87171",letterSpacing:".07em",marginBottom:10,fontWeight:700,textTransform:"uppercase"}}>⛔ Terminated ({byMarket["⛔ Terminated"].length})</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-            {byMarket["⛔ Terminated"].map(rep=>(
-              <div key={rep} style={{display:"flex",alignItems:"center",gap:7,background:"var(--red-dim)",border:"1px solid rgba(248,113,113,.18)",borderRadius:6,padding:"5px 11px"}}>
-                <span style={{fontSize:12,color:"var(--text-muted)",textDecoration:"line-through"}}>{rep}</span>
-                <button onClick={()=>toggleTerminated(rep)} style={{background:"none",border:"none",color:"var(--text-muted)",cursor:"pointer",fontSize:11,fontFamily:"inherit"}}>↩</button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {allReps.length===0&&<div style={{color:"var(--text-muted)",fontSize:13,textAlign:"center",padding:40}}>Upload R30 or YTD data first.</div>}
-    </div>
-  );
-}
-
-// ─── REP MAP TAB (unchanged logic, minor style) ─────────────────────────────
-function RepMapTab({allReps,markets}){
-  const mapRef=useRef(null);
-  const leafletMap=useRef(null);
-  const markersRef=useRef([]);
-  const routeLayerRef=useRef(null);
-  const [repData,setRepData]=useState([]);
-  const [activeRep,setActiveRep]=useState(null);
-  const [search,setSearch]=useState("");
-  const [orsKey,setOrsKey]=useState(()=>localStorage.getItem("ors_api_key")||"");
-  const [orsKeyInput,setOrsKeyInput]=useState(()=>localStorage.getItem("ors_api_key")||"");
-  const [panel,setPanel]=useState("reps");
-  const [addrInput,setAddrInput]=useState("");
-  const [destInputs,setDestInputs]=useState(["","",""]);
-  const [routeResults,setRouteResults]=useState({});
-  const [geocoding,setGeocoding]=useState(false);
-  const [calcingRoutes,setCalcingRoutes]=useState(false);
-  const [qFrom,setQFrom]=useState("");
-  const [qTo,setQTo]=useState("");
-  const [qResult,setQResult]=useState(null);
-  const [qLoading,setQLoading]=useState(false);
-  const [toast,setToast]=useState(null);
-  const toastTimer=useRef(null);
-  const REP_COLORS=["#f97316","#38bdf8","#34d399","#a78bfa","#fb7185","#fbbf24","#34d399","#60a5fa","#e879f9","#f472b6","#84cc16","#22d3ee","#c084fc","#fb923c","#2dd4bf"];
-  const repColor=idx=>REP_COLORS[idx%REP_COLORS.length];
-  const showToast=(msg,type="")=>{clearTimeout(toastTimer.current);setToast({msg,type});toastTimer.current=setTimeout(()=>setToast(null),2800);};
-
-  useEffect(()=>{(async()=>{const d=await db.get("repmap");if(d&&Array.isArray(d))setRepData(d);})();},[]);
-  useEffect(()=>{
-    if(!allReps.length)return;
-    setRepData(prev=>{
-      const existing=new Set(prev.map(r=>r.rep));
-      const newOnes=allReps.filter(r=>r.tier!=="⛔ Excluded"&&markets[r.rep]!=="⛔ Terminated"&&!existing.has(r.rep)).map(r=>({rep:r.rep,address:"",lat:null,lng:null,destinations:["","",""]}));
-      if(!newOnes.length)return prev;
-      return[...prev,...newOnes];
-    });
-  },[allReps,markets]);
-
-  const saveTimer=useRef(null);
-  useEffect(()=>{
-    if(!repData.length)return;
-    clearTimeout(saveTimer.current);
-    saveTimer.current=setTimeout(async()=>{await db.set("repmap",repData);},1500);
-  },[repData]);
-
-  useEffect(()=>{
-    if(!mapRef.current||leafletMap.current)return;
-    const map=L.map(mapRef.current,{center:[27.8,-81.7],zoom:7,zoomControl:false});
-    L.control.zoom({position:"bottomright"}).addTo(map);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"© OpenStreetMap",maxZoom:19}).addTo(map);
-    routeLayerRef.current=L.layerGroup().addTo(map);
-    leafletMap.current=map;
-    setTimeout(()=>map.invalidateSize(),100);
-    return()=>{map.remove();leafletMap.current=null;};
-  },[]);
-
-  useEffect(()=>{
-    if(!leafletMap.current)return;
-    markersRef.current.forEach(m=>m.remove());
-    markersRef.current=[];
-    repData.forEach((rep,idx)=>{
-      if(rep.lat==null||rep.lng==null)return;
-      const color=repColor(idx),isActive=rep.rep===activeRep;
-      const initial=(rep.rep.split(",")[1]?.trim()[0]||rep.rep[0]||"?").toUpperCase();
-      const div=document.createElement("div");
-      div.style.cssText=`width:32px;height:32px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;color:#fff;border:2px solid ${isActive?"#fff":"rgba(255,255,255,0.2)"};box-shadow:0 2px 12px rgba(0,0,0,.5);cursor:pointer;transform:${isActive?"scale(1.3)":"scale(1)"};transition:transform .15s;font-family:DM Sans`;
-      div.textContent=initial;
-      const icon=L.divIcon({className:"",html:div,iconSize:[32,32],iconAnchor:[16,16],popupAnchor:[0,-20]});
-      const marker=L.marker([rep.lat,rep.lng],{icon});
-      marker.bindPopup(`<div style="font-family:DM Sans;padding:2px"><div style="font-weight:700;font-size:14px;color:#f1f5f9;margin-bottom:4px">${rep.rep}</div><div style="font-size:11px;color:#94a3b8">${rep.address||"No address"}</div>${markets[rep.rep]?`<div style="font-size:10px;color:#fbbf24;margin-top:3px">📍 ${markets[rep.rep]}</div>`:""}</div>`);
-      marker.on("click",()=>{setActiveRep(rep.rep);setPanel("reps");});
-      marker.addTo(leafletMap.current);
-      markersRef.current.push(marker);
-    });
-  },[repData,activeRep]);
-
-  const haversine=(lat1,lng1,lat2,lng2)=>{const R=3958.8,dL=(lat2-lat1)*Math.PI/180,dl=(lng2-lng1)*Math.PI/180;const a=Math.sin(dL/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dl/2)**2;return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));};
-  const nominatim=async addr=>{const q=addr.toLowerCase().includes("fl")||addr.toLowerCase().includes("florida")?addr:addr+", Florida, USA";const r=await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`,{headers:{"Accept-Language":"en"}});const d=await r.json();return d&&d[0]?{lat:parseFloat(d[0].lat),lng:parseFloat(d[0].lon)}:null;};
-  const fmtTime=mins=>{const h=Math.floor(mins/60),m=mins%60;return h>0?`${h}h ${m}m`:`${m}m`;};
-  const geocodeRep=async()=>{if(!addrInput.trim()){showToast("Enter an address first","error");return;}setGeocoding(true);showToast("Geocoding…");const geo=await nominatim(addrInput.trim());if(geo){setRepData(prev=>prev.map(r=>r.rep===activeRep?{...r,address:addrInput.trim(),lat:geo.lat,lng:geo.lng}:r));showToast("Location found ✓","success");if(leafletMap.current)leafletMap.current.flyTo([geo.lat,geo.lng],11,{duration:1});}else{showToast("Address not found","error");}setGeocoding(false);};
-  const calcRoutes=async()=>{const rep=repData.find(r=>r.rep===activeRep);if(!rep||rep.lat==null){showToast("Locate rep first","error");return;}const active=destInputs.filter(d=>d.trim());if(!active.length){showToast("Enter a destination","error");return;}setRepData(prev=>prev.map(r=>r.rep===activeRep?{...r,destinations:destInputs}:r));setCalcingRoutes(true);const newResults={};for(let i=0;i<destInputs.length;i++){const dest=destInputs[i].trim();if(!dest)continue;newResults[i]={loading:true};setRouteResults(r=>({...r,[activeRep]:{...r[activeRep],...newResults}}));try{const dGeo=await nominatim(dest);if(!dGeo){newResults[i]={error:"Destination not found"};continue;}if(orsKey){const res=await fetch("https://api.openrouteservice.org/v2/directions/driving-car",{method:"POST",headers:{"Authorization":orsKey,"Content-Type":"application/json"},body:JSON.stringify({coordinates:[[rep.lng,rep.lat],[dGeo.lng,dGeo.lat]]})});const data=await res.json();if(data.routes?.[0]){const s=data.routes[0].summary;newResults[i]={miles:(s.distance*0.000621371).toFixed(1),time:fmtTime(Math.round(s.duration/60))};}else{newResults[i]={error:data.error?.message||"Not found"};}}else{const miles=(haversine(rep.lat,rep.lng,dGeo.lat,dGeo.lng)*1.3).toFixed(1);newResults[i]={miles:miles+"*",time:fmtTime(Math.round(miles/45*60))+"*"};}await new Promise(r=>setTimeout(r,600));}catch(e){newResults[i]={error:"Network error"};}}setRouteResults(r=>({...r,[activeRep]:newResults}));setCalcingRoutes(false);showToast("Done ✓","success");};
-  const activeRepData=repData.find(r=>r.rep===activeRep);
-  useEffect(()=>{if(!activeRepData)return;setAddrInput(activeRepData.address||"");setDestInputs(activeRepData.destinations?.length===3?activeRepData.destinations:["","",""]);setRouteResults({});},[activeRep]);
-  const zoomToRep=()=>{if(!activeRepData?.lat){showToast("No location set","error");return;}leafletMap.current?.flyTo([activeRepData.lat,activeRepData.lng],12,{duration:1});};
-  const filteredReps=repData.filter(r=>{if(markets[r.rep]==="⛔ Terminated")return false;return r.rep.toLowerCase().includes(search.toLowerCase())||(markets[r.rep]||"").toLowerCase().includes(search.toLowerCase());});
-  const mapped=filteredReps.filter(r=>r.lat!=null),unmapped=filteredReps.filter(r=>r.lat==null);
-
-  const inp={background:"var(--bg-elevated)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 11px",color:"var(--text-primary)",fontSize:12,fontFamily:"inherit",outline:"none",width:"100%"};
-  const sectionLbl={fontSize:10,color:"var(--text-muted)",letterSpacing:".08em",textTransform:"uppercase",marginBottom:6};
-
-  const RouteResultBlock=({repKey})=>{
-    const res=routeResults[repKey]||{};
-    return(
-      <div>
-        {destInputs.map((dest,i)=>{
-          if(!dest.trim())return null;const r=res[i];if(!r)return null;
-          return(
-            <div key={i} style={{background:"var(--bg-elevated)",border:"1px solid var(--border)",borderRadius:"var(--radius)",marginTop:8,overflow:"hidden"}}>
-              <div style={{padding:"7px 11px",background:"rgba(52,211,153,.06)",borderBottom:"1px solid var(--border)"}}>
-                <span style={{fontSize:11,color:"#34d399",fontWeight:600}}>{dest}</span>
-              </div>
-              {r.loading?(
-                <div style={{padding:"10px 12px",fontSize:11,color:"var(--text-muted)",display:"flex",alignItems:"center",gap:8}}>
-                  <div style={{width:10,height:10,border:"2px solid var(--border)",borderTopColor:"#34d399",borderRadius:"50%",animation:"spin .6s linear infinite"}}/>Calculating…
-                </div>
-              ):r.error?(
-                <div style={{padding:"10px 12px",fontSize:11,color:"#f87171"}}>⚠ {r.error}</div>
               ):(
-                <div style={{display:"flex",gap:24,padding:"10px 14px"}}>
-                  <div><div style={{fontSize:18,fontWeight:800,color:"var(--text-primary)",fontFamily:"var(--font-mono)"}}>{r.miles}</div><div style={{fontSize:10,color:"var(--text-muted)"}}>miles</div></div>
-                  <div><div style={{fontSize:18,fontWeight:800,color:"var(--text-primary)",fontFamily:"var(--font-mono)"}}>{r.time}</div><div style={{fontSize:10,color:"var(--text-muted)"}}>drive time</div></div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-        {!orsKey&&Object.keys(res).some(k=>res[k]&&!res[k].loading&&!res[k].error)&&(
-          <div style={{fontSize:10,color:"var(--text-faint)",marginTop:6}}>* Estimate (straight-line ×1.3). Add ORS key in Settings for accurate routing.</div>
-        )}
-      </div>
-    );
-  };
-
-  return(
-    <div style={{display:"flex",height:"calc(100vh - 100px)",overflow:"hidden",position:"relative"}}>
-      {toast&&(
-        <div style={{position:"absolute",bottom:20,left:"50%",transform:"translateX(-50%)",background:"var(--bg-surface)",border:`1px solid ${toast.type==="success"?"#34d399":toast.type==="error"?"#f87171":"var(--border)"}`,color:toast.type==="success"?"#34d399":toast.type==="error"?"#f87171":"var(--text-primary)",borderRadius:"var(--radius)",padding:"9px 18px",fontSize:12,zIndex:999,whiteSpace:"nowrap",boxShadow:"0 4px 24px rgba(0,0,0,.6)"}}>
-          {toast.msg}
-        </div>
-      )}
-      <div style={{flex:1,position:"relative"}}>
-        <div ref={mapRef} style={{width:"100%",height:"100%"}}/>
-        <style>{`.leaflet-tile{filter:brightness(0.55) saturate(0.6) hue-rotate(200deg);}.leaflet-container{background:#070b12!important;}.leaflet-popup-content-wrapper{background:var(--bg-surface)!important;border:1px solid var(--border-strong)!important;border-radius:10px!important;box-shadow:0 4px 24px rgba(0,0,0,.7)!important;color:var(--text-primary)!important;}.leaflet-popup-tip{background:var(--bg-surface)!important;}.leaflet-popup-content{margin:10px 14px!important;}`}</style>
-      </div>
-      <div style={{width:340,background:"var(--bg-surface)",borderLeft:"1px solid var(--border)",display:"flex",flexDirection:"column",overflow:"hidden",zIndex:10}}>
-        <div style={{display:"flex",borderBottom:"1px solid var(--border)",flexShrink:0}}>
-          {[["reps","Reps"],["route","Route"],["settings","Settings"]].map(([k,l])=>(
-            <div key={k} onClick={()=>setPanel(k)} style={{flex:1,padding:"10px 4px",fontSize:10,textAlign:"center",cursor:"pointer",letterSpacing:".06em",textTransform:"uppercase",color:panel===k?"#34d399":"var(--text-muted)",borderBottom:panel===k?"2px solid #34d399":"2px solid transparent",transition:"all .15s",fontWeight:panel===k?700:400}}>
-              {l}
-            </div>
-          ))}
-        </div>
-        <div style={{flex:1,overflowY:"auto",padding:14}}>
-          {panel==="reps"&&!activeRep&&(
-            <div>
-              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search reps or markets…" style={{...inp,marginBottom:10}}/>
-              <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",fontSize:11}}>
-                <span style={{color:"var(--text-muted)"}}>{repData.length} reps</span>
-                <span style={{color:"#34d399"}}>· {mapped.length} mapped</span>
-                {unmapped.length>0&&<span style={{color:"#fbbf24"}}>· {unmapped.length} unmapped</span>}
-              </div>
-              {mapped.length>0&&(
-                <div style={{marginBottom:12}}>
-                  <div style={sectionLbl}>📍 Mapped ({mapped.length})</div>
-                  {mapped.map((rep)=>{
-                    const idx=repData.indexOf(rep);
-                    return(
-                      <div key={rep.rep} onClick={()=>setActiveRep(rep.rep)} style={{background:"var(--bg-elevated)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 12px",cursor:"pointer",marginBottom:5,display:"flex",alignItems:"center",gap:10,transition:"all .15s"}}
-                        onMouseEnter={e=>{e.currentTarget.style.borderColor="var(--border-strong)";}}
-                        onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border)";}}>
-                        <div style={{width:9,height:9,borderRadius:"50%",background:repColor(idx),flexShrink:0}}/>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontWeight:600,fontSize:12,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{rep.rep}</div>
-                          <div style={{fontSize:10,color:"var(--text-muted)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{rep.address}</div>
-                        </div>
-                        {markets[rep.rep]&&<span style={{fontSize:9,color:"#fbbf24",background:"rgba(251,191,36,.1)",padding:"2px 5px",borderRadius:3}}>{markets[rep.rep]}</span>}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              {unmapped.length>0&&(
-                <div>
-                  <div style={sectionLbl}>⚠ Unmapped ({unmapped.length})</div>
-                  {unmapped.map((rep)=>{
-                    const idx=repData.indexOf(rep);
-                    return(
-                      <div key={rep.rep} onClick={()=>setActiveRep(rep.rep)} style={{background:"var(--bg-elevated)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 12px",cursor:"pointer",marginBottom:5,display:"flex",alignItems:"center",gap:10,opacity:.65,transition:"all .15s"}}
-                        onMouseEnter={e=>{e.currentTarget.style.opacity="1";}}
-                        onMouseLeave={e=>{e.currentTarget.style.opacity=".65";}}>
-                        <div style={{width:9,height:9,borderRadius:"50%",background:repColor(idx),flexShrink:0}}/>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontWeight:600,fontSize:12,color:"var(--text-secondary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{rep.rep}</div>
-                          <div style={{fontSize:10,color:"var(--text-faint)",fontStyle:"italic"}}>Click to set address</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-          {panel==="reps"&&activeRep&&(
-            <div>
-              <div onClick={()=>setActiveRep(null)} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:"var(--text-muted)",cursor:"pointer",marginBottom:14,transition:"color .15s"}}
-                onMouseEnter={e=>{e.currentTarget.style.color="var(--text-secondary)";}}
-                onMouseLeave={e=>{e.currentTarget.style.color="var(--text-muted)";}}>
-                ← Back
-              </div>
-              <div style={{fontWeight:800,fontSize:16,color:"var(--text-primary)",marginBottom:2,fontFamily:"var(--font-display)"}}>{activeRep}</div>
-              {markets[activeRep]&&<div style={{fontSize:11,color:"#fbbf24",marginBottom:14}}>🗺 {markets[activeRep]}</div>}
-              <div style={{marginBottom:16}}>
-                <div style={sectionLbl}>Home Address</div>
-                <div style={{display:"flex",gap:6}}>
-                  <input value={addrInput} onChange={e=>setAddrInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&geocodeRep()} placeholder="123 Main St, Miami, FL" style={{...inp,flex:1}}/>
-                  <button onClick={geocodeRep} disabled={geocoding} style={{background:"rgba(52,211,153,.1)",border:"1px solid rgba(52,211,153,.3)",borderRadius:"var(--radius-sm)",padding:"7px 12px",color:"#34d399",cursor:"pointer",fontSize:11,fontFamily:"inherit",flexShrink:0}}>
-                    {geocoding?"…":"📍 Locate"}
-                  </button>
-                </div>
-                {activeRepData?.lat&&<div style={{fontSize:10,color:"var(--text-faint)",marginTop:4,fontFamily:"var(--font-mono)"}}>{activeRepData.lat.toFixed(4)}, {activeRepData.lng.toFixed(4)}</div>}
-              </div>
-              <div style={{marginBottom:12}}>
-                <div style={sectionLbl}>Drive Distance Check</div>
-                {destInputs.map((d,i)=>(
-                  <div key={i} style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
-                    <span style={{fontSize:10,color:"var(--text-faint)",width:14,flexShrink:0,fontFamily:"var(--font-mono)"}}>{i+1}</span>
-                    <input value={d} onChange={e=>setDestInputs(prev=>prev.map((v,j)=>j===i?e.target.value:v))} onKeyDown={e=>e.key==="Enter"&&calcRoutes()} placeholder="City or address" style={inp}/>
-                  </div>
-                ))}
-                <button onClick={calcRoutes} disabled={calcingRoutes} className="btn-primary" style={{width:"100%",marginTop:6}}>{calcingRoutes?"Calculating…":"Calculate Drives"}</button>
-              </div>
-              <RouteResultBlock repKey={activeRep}/>
-              <div style={{display:"flex",gap:8,marginTop:14,borderTop:"1px solid var(--border)",paddingTop:14}}>
-                <button onClick={zoomToRep} className="btn-ghost" style={{flex:1}}>🔍 Zoom to Rep</button>
-              </div>
-            </div>
-          )}
-          {panel==="route"&&(
-            <div>
-              <div style={{fontWeight:700,fontSize:13,color:"var(--text-primary)",marginBottom:14,fontFamily:"var(--font-display)"}}>Quick Route Check</div>
-              <div style={{marginBottom:10}}><div style={sectionLbl}>From</div><input value={qFrom} onChange={e=>setQFrom(e.target.value)} placeholder="City or address" style={inp}/></div>
-              <div style={{marginBottom:12}}><div style={sectionLbl}>To</div><input value={qTo} onChange={e=>setQTo(e.target.value)} placeholder="City or address" style={inp}/></div>
-              <button className="btn-primary" style={{width:"100%"}} onClick={async()=>{
-                if(!qFrom.trim()||!qTo.trim())return;setQLoading(true);setQResult(null);
-                try{
-                  const [fGeo,tGeo]=await Promise.all([nominatim(qFrom),nominatim(qTo)]);
-                  if(!fGeo||!tGeo){setQResult({error:"Could not locate addresses"});setQLoading(false);return;}
-                  if(orsKey){const res=await fetch("https://api.openrouteservice.org/v2/directions/driving-car",{method:"POST",headers:{"Authorization":orsKey,"Content-Type":"application/json"},body:JSON.stringify({coordinates:[[fGeo.lng,fGeo.lat],[tGeo.lng,tGeo.lat]]})});const data=await res.json();if(data.routes?.[0]){const s=data.routes[0].summary;setQResult({miles:(s.distance*0.000621371).toFixed(1),time:fmtTime(Math.round(s.duration/60)),from:qFrom,to:qTo});}else{setQResult({error:data.error?.message||"Route not found"});}}
-                  else{const miles=(haversine(fGeo.lat,fGeo.lng,tGeo.lat,tGeo.lng)*1.3).toFixed(1);setQResult({miles:miles+"*",time:fmtTime(Math.round(miles/45*60))+"*",from:qFrom,to:qTo,est:true});}
-                  routeLayerRef.current?.clearLayers();
-                  L.polyline([[fGeo?.lat,fGeo?.lng],[tGeo?.lat,tGeo?.lng]],{color:"#34d399",weight:2.5,opacity:.7,dashArray:"6,5"}).addTo(routeLayerRef.current);
-                  leafletMap.current?.fitBounds([[fGeo?.lat,fGeo?.lng],[tGeo?.lat,tGeo?.lng]],{padding:[50,50]});
-                }catch(e){setQResult({error:"Network error"});}
-                setQLoading(false);
-              }} disabled={qLoading}>{qLoading?"Calculating…":"Calculate"}</button>
-              {qResult&&(
-                <div style={{background:"var(--bg-elevated)",border:"1px solid var(--border)",borderRadius:"var(--radius)",marginTop:14,overflow:"hidden"}}>
-                  {qResult.error?(
-                    <div style={{padding:"12px 14px",fontSize:12,color:"#f87171"}}>⚠ {qResult.error}</div>
-                  ):(
-                    <>
-                      <div style={{padding:"8px 12px",background:"rgba(52,211,153,.06)",borderBottom:"1px solid var(--border)",fontSize:11,color:"#34d399",fontWeight:600}}>{qResult.from} → {qResult.to}</div>
-                      <div style={{display:"flex",gap:24,padding:"12px 16px"}}>
-                        <div><div style={{fontSize:22,fontWeight:800,color:"var(--text-primary)",fontFamily:"var(--font-mono)"}}>{qResult.miles}</div><div style={{fontSize:10,color:"var(--text-muted)"}}>miles</div></div>
-                        <div><div style={{fontSize:22,fontWeight:800,color:"var(--text-primary)",fontFamily:"var(--font-mono)"}}>{qResult.time}</div><div style={{fontSize:10,color:"var(--text-muted)"}}>drive time</div></div>
-                      </div>
-                      {qResult.est&&<div style={{padding:"0 14px 10px",fontSize:10,color:"var(--text-faint)"}}>* Estimate — add ORS key in Settings for accurate routing.</div>}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          {panel==="settings"&&(
-            <div>
-              <div style={{fontWeight:700,fontSize:13,color:"var(--text-primary)",marginBottom:14,fontFamily:"var(--font-display)"}}>Settings</div>
-              <div>
-                <div style={sectionLbl}>OpenRouteService API Key</div>
-                <div style={{fontSize:11,color:"var(--text-muted)",marginBottom:8,lineHeight:1.6}}>Free at <a href="https://openrouteservice.org/dev/#/signup" target="_blank" style={{color:"#38bdf8"}}>openrouteservice.org</a></div>
-                <div style={{display:"flex",gap:6}}>
-                  <input type="password" value={orsKeyInput} onChange={e=>setOrsKeyInput(e.target.value)} placeholder="Paste ORS key here" style={{...inp,flex:1,fontFamily:"var(--font-mono)"}}/>
-                  <button onClick={()=>{setOrsKey(orsKeyInput);localStorage.setItem("ors_api_key",orsKeyInput);showToast("Key saved ✓","success");}} className="btn-primary">Save</button>
-                </div>
-                {orsKey&&<div style={{fontSize:10,color:"#34d399",marginTop:5}}>✓ ORS key active</div>}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── TRACKER ─────────────────────────────────────────────────────────────────
-const DISPATCHERS=[
-  {id:"RJ",name:"RJ",color:"#38bdf8",bg:"rgba(56,189,248,.12)"},
-  {id:"BR",name:"BR",color:"#34d399",bg:"rgba(52,211,153,.12)"},
-  {id:"JF",name:"JF",color:"#fbbf24",bg:"rgba(251,191,36,.12)"},
-];
-const INTERACTION_TYPES=["Dispatch","Setting","Confirming","Other"];
-const DISPATCH_SUBTYPES=["1 Leg","No Home","No Demo","Schedule Change","Miscellaneous"];
-const URGENT_MS=5*60*1000;
-
-function useNow(){
-  const [now,setNow]=useState(Date.now());
-  useEffect(()=>{const iv=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(iv);},[]);
-  return now;
-}
-function fmtElapsed(ms){const s=Math.floor(ms/1000),m=Math.floor(s/60),sec=s%60;if(m>=60){const h=Math.floor(m/60),rm=m%60;return`${h}h ${rm}m`;}return`${m}m ${sec}s`;}
-
-function ConfirmingForm({onSubmit}){
-  const [form,setForm]=useState({customerName:"",promoter:"",apptDate:"Today",apptTime:"9AM",phone:"",address:"",homeType:"SFH",residenceType:"PR",windows:"",doors:"",sliders:"",originalWindows:"Yes",mainStructure:"Yes",noResize:"Yes",maritalStatus:"Single",gateCode:"",notes:""});
-  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
-  const inp={background:"var(--bg-elevated)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 10px",color:"var(--text-primary)",fontSize:12,fontFamily:"inherit",outline:"none",width:"100%"};
-  const lbl={fontSize:10,color:"var(--text-muted)",letterSpacing:".06em",textTransform:"uppercase",marginBottom:4,display:"block"};
-  const BtnGroup=({fieldKey,opts})=>(
-    <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-      {opts.map(o=>{
-        const active=form[fieldKey]===o.val;
-        return(
-          <div key={o.val} onClick={()=>set(fieldKey,o.val)} style={{padding:"5px 11px",borderRadius:"var(--radius-sm)",cursor:"pointer",fontSize:11,border:`1.5px solid ${active?"#38bdf8":"var(--border)"}`,background:active?"rgba(56,189,248,.1)":"var(--bg-elevated)",color:active?"var(--text-primary)":"var(--text-muted)",fontWeight:active?700:400,transition:"all .12s"}}>
-            <div>{o.label}</div>
-            {o.sub&&<div style={{fontSize:9,color:active?"var(--text-muted)":"var(--text-faint)",marginTop:1}}>{o.sub}</div>}
-          </div>
-        );
-      })}
-    </div>
-  );
-  return(
-    <div>
-      <div style={{marginBottom:10}}><span style={lbl}>Customer Name</span><input value={form.customerName} onChange={e=>set("customerName",e.target.value)} placeholder="Full name" style={inp}/></div>
-      <div style={{marginBottom:10}}><span style={lbl}>Promoter</span><input value={form.promoter} onChange={e=>set("promoter",e.target.value)} placeholder="Promoter name" style={inp}/></div>
-      <div style={{marginBottom:10}}><span style={lbl}>Appt Date</span><BtnGroup fieldKey="apptDate" opts={[{val:"Today",label:"Today"},{val:"Tomorrow",label:"Tomorrow"},{val:"72+",label:"72+"}]}/></div>
-      <div style={{marginBottom:10}}><span style={lbl}>Appt Time</span><BtnGroup fieldKey="apptTime" opts={["9AM","10AM","11AM","1PM","2PM","3PM","5PM","6PM","7PM"].map(t=>({val:t,label:t}))}/></div>
-      <div style={{marginBottom:10}}><span style={lbl}>Ph#</span><input value={form.phone} onChange={e=>set("phone",e.target.value)} placeholder="(000) 000-0000" style={inp}/></div>
-      <div style={{marginBottom:10}}><span style={lbl}>Address</span><input value={form.address} onChange={e=>set("address",e.target.value)} placeholder="Street, City, FL ZIP" style={inp}/></div>
-      <div style={{marginBottom:10}}><span style={lbl}>Home Type</span><BtnGroup fieldKey="homeType" opts={[{val:"SFH",label:"SFH",sub:"Single Family"},{val:"TH",label:"TH",sub:"TownHome"},{val:"Condo",label:"Condo"},{val:"Villa",label:"Villa"}]}/></div>
-      <div style={{marginBottom:10}}><span style={lbl}>Residence Type</span><BtnGroup fieldKey="residenceType" opts={[{val:"PR",label:"PR",sub:"Primary Res."},{val:"IP",label:"IP",sub:"Investment"}]}/></div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
-        <div><span style={lbl}>Windows</span><input value={form.windows} onChange={e=>set("windows",e.target.value)} placeholder="0" style={inp}/></div>
-        <div><span style={lbl}>Doors</span><input value={form.doors} onChange={e=>set("doors",e.target.value)} placeholder="0" style={inp}/></div>
-        <div><span style={lbl}>Sliders</span><input value={form.sliders} onChange={e=>set("sliders",e.target.value)} placeholder="0" style={inp}/></div>
-      </div>
-      <div style={{marginBottom:10}}><span style={lbl}>Original Windows</span><BtnGroup fieldKey="originalWindows" opts={[{val:"Yes",label:"Yes"},{val:"No",label:"No"}]}/></div>
-      <div style={{marginBottom:10}}><span style={lbl}>Main Structure</span><BtnGroup fieldKey="mainStructure" opts={[{val:"Yes",label:"Yes"},{val:"No",label:"No"}]}/></div>
-      <div style={{marginBottom:10}}><span style={lbl}>No Resize</span><BtnGroup fieldKey="noResize" opts={[{val:"Yes",label:"Yes"},{val:"No",label:"No"}]}/></div>
-      <div style={{marginBottom:10}}><span style={lbl}>Marital Status</span><BtnGroup fieldKey="maritalStatus" opts={["Single","Married","Partners","Siblings","Family/Friends"].map(s=>({val:s,label:s}))}/></div>
-      <div style={{marginBottom:10}}><span style={lbl}>Gate Code</span><input value={form.gateCode} onChange={e=>set("gateCode",e.target.value)} placeholder="If applicable" style={inp}/></div>
-      <div style={{marginBottom:12}}><span style={lbl}>Notes</span><textarea value={form.notes} onChange={e=>set("notes",e.target.value)} placeholder="Additional notes..." style={{...inp,minHeight:60,resize:"vertical"}}/></div>
-      <button onClick={()=>onSubmit(form)} className="btn-primary" style={{width:"100%",padding:"10px 0",fontSize:13}}>Submit Log Entry</button>
-    </div>
-  );
-}
-
-function TrackerTab({allReps,markets}){
-  const [dispatcher,setDispatcher]=useState(()=>localStorage.getItem("tracker_dispatcher")||null);
-  const [interactionType,setInteractionType]=useState(null);
-  const [selectedRep,setSelectedRep]=useState("");
-  const [repSearch,setRepSearch]=useState("");
-  const [dispatchSubtype,setDispatchSubtype]=useState("");
-  const [dispatchNote,setDispatchNote]=useState("");
-  const [otherNote,setOtherNote]=useState("");
-  const [log,setLog]=useState([]);
-  const [filterDispatcher,setFilterDispatcher]=useState("All");
-  const [trackerView,setTrackerView]=useState("intake");
-  const now=useNow();
-
-  useEffect(()=>{const load=async()=>{const d=await db.get("tracker_log");if(d&&Array.isArray(d))setLog(d);};load();const iv=setInterval(load,10000);return()=>clearInterval(iv);},[]);
-  const saveLog=async(newLog)=>{setLog(newLog);await db.set("tracker_log",newLog.slice(-200));};
-  const selectDispatcher=(id)=>{setDispatcher(id);localStorage.setItem("tracker_dispatcher",id);};
-  const resetFlow=()=>{setInteractionType(null);setSelectedRep("");setRepSearch("");setDispatchSubtype("");setDispatchNote("");setOtherNote("");};
-  const activeReps=useMemo(()=>{const seen=new Set();const list=[];for(const r of allReps.filter(x=>x.tier!=="⛔ Excluded"&&markets[x.rep]!=="⛔ Terminated")){if(!seen.has(r.rep)){seen.add(r.rep);list.push(r.rep);}}return list.sort();},[allReps,markets]);
-  const submitEntry=(formData)=>{
-    const ts=new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
-    let autoNote=null;
-    if(interactionType==="Dispatch"&&selectedRep&&dispatchSubtype){
-      const nameParts=selectedRep.includes(",")?selectedRep.split(",").map(p=>p.trim()):null;
-      const fmtName=nameParts?`${nameParts[1]} ${nameParts[0]}`:selectedRep;
-      autoNote=`Rep ${fmtName} called in ${ts} stating ${dispatchSubtype}${dispatchNote.trim()?" - "+dispatchNote.trim():""}`;
-    }
-    const entry={id:Date.now()+"_"+Math.random().toString(36).slice(2,7),dispatcher,type:interactionType,rep:selectedRep||null,subtype:dispatchSubtype||null,note:interactionType==="Other"?(otherNote||null):autoNote,dispatchNote:dispatchNote||null,form:formData||null,timestamp:Date.now(),status:"active",completedAt:null};
-    saveLog([entry,...log]);resetFlow();
-  };
-  const markComplete=(id)=>{saveLog(log.map(e=>e.id===id?{...e,status:"done",completedAt:Date.now()}:e));};
-  const urgent=log.filter(e=>e.status==="active"&&(now-e.timestamp)>=URGENT_MS);
-  const active=log.filter(e=>e.status==="active"&&(now-e.timestamp)<URGENT_MS);
-  const done=log.filter(e=>e.status==="done");
-  const filteredLog=[...urgent,...active,...done].filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher);
-  const dispColor=id=>DISPATCHERS.find(d=>d.id===id)?.color??"#64748b";
-  const typeColor=t=>t==="Dispatch"?"#38bdf8":t==="Setting"?"#34d399":t==="Confirming"?"#fbbf24":t==="Other"?"#a78bfa":"#64748b";
-
-  const LogEntry=({entry})=>{
-    const elapsed=entry.status==="done"?entry.completedAt-entry.timestamp:now-entry.timestamp;
-    const isUrgent=entry.status==="active"&&elapsed>=URGENT_MS;
-    const isDone=entry.status==="done";
-    const dc=dispColor(entry.dispatcher),tc=typeColor(entry.type);
-    const [copied,setCopied]=useState(false);
-    const copyNote=()=>{if(!entry.note)return;navigator.clipboard.writeText(entry.note).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);});};
-    return(
-      <div style={{background:isDone?"var(--bg-base)":isUrgent?"rgba(248,113,113,.05)":"var(--bg-surface)",border:`1px solid ${isDone?"var(--border)":isUrgent?"rgba(248,113,113,.35)":"var(--border)"}`,borderRadius:"var(--radius)",padding:"10px 14px",marginBottom:7,opacity:isDone?.6:1,transition:"opacity .2s"}}>
-        <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
-          {isUrgent&&<span style={{fontSize:10,fontWeight:800,color:"#f87171",background:"rgba(248,113,113,.12)",padding:"2px 7px",borderRadius:4,animation:"pulse 1.5s infinite"}}>🚨 URGENT</span>}
-          {isDone&&<span style={{fontSize:10,color:"#34d399",fontWeight:700}}>✓ DONE</span>}
-          <span style={{fontSize:12,fontWeight:700,color:dc,background:`${dc}18`,padding:"2px 8px",borderRadius:4}}>{entry.dispatcher}</span>
-          <span style={{fontSize:12,fontWeight:600,color:tc}}>{entry.type}</span>
-          {entry.rep&&<span style={{fontSize:11,color:"var(--text-secondary)"}}>→ {entry.rep}</span>}
-          {entry.subtype&&<span style={{fontSize:11,color:"var(--text-muted)",background:"var(--bg-elevated)",padding:"1px 6px",borderRadius:3}}>{entry.subtype}</span>}
-          {entry.form?.customerName&&<span style={{fontSize:10,color:"var(--text-muted)"}}>👤 {entry.form.customerName}</span>}
-          {entry.form&&(entry.type==="Setting"||entry.type==="Confirming")&&<span style={{fontSize:10,color:"var(--text-muted)"}}>{entry.form.apptDate} @ {entry.form.apptTime} · {entry.form.homeType}</span>}
-          <div style={{flex:1}}/>
-          <span style={{fontSize:11,color:isDone?"#34d399":isUrgent?"#f87171":"var(--text-muted)",fontWeight:isUrgent?700:400,fontFamily:"var(--font-mono)"}}>{fmtElapsed(elapsed)}{isDone?" total":""}</span>
-          <span style={{fontSize:10,color:"var(--text-faint)"}}>{new Date(entry.timestamp).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>
-          {!isDone&&<button onClick={()=>markComplete(entry.id)} style={{background:"rgba(52,211,153,.1)",border:"1px solid rgba(52,211,153,.3)",borderRadius:4,padding:"3px 10px",color:"#34d399",cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:"inherit"}}>✓ Done</button>}
-        </div>
-        {entry.note&&(
-          <div style={{marginTop:8,display:"flex",alignItems:"flex-start",gap:8}}>
-            <div style={{flex:1,fontSize:11,color:"var(--text-secondary)",fontStyle:"italic",background:"rgba(255,255,255,.03)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"7px 10px",lineHeight:1.6,wordBreak:"break-word"}}>{entry.note}</div>
-            <button onClick={copyNote} style={{flexShrink:0,background:copied?"rgba(52,211,153,.1)":"rgba(255,255,255,.03)",border:`1px solid ${copied?"rgba(52,211,153,.3)":"var(--border)"}`,borderRadius:4,padding:"6px 10px",color:copied?"#34d399":"var(--text-muted)",cursor:"pointer",fontSize:11,fontFamily:"inherit",whiteSpace:"nowrap"}}>{copied?"✓ Copied":"📋 Copy"}</button>
-          </div>
-        )}
-        {entry.form&&(entry.type==="Setting"||entry.type==="Confirming")&&(
-          <div style={{marginTop:6,display:"flex",flexWrap:"wrap",gap:8,fontSize:10,color:"var(--text-muted)"}}>
-            {entry.form.phone&&<span>📞 {entry.form.phone}</span>}
-            {entry.form.address&&<span>📍 {entry.form.address}</span>}
-            {entry.form.windows&&<span>🪟 {entry.form.windows}win</span>}
-            {entry.form.doors&&<span>🚪 {entry.form.doors}dr</span>}
-            {entry.form.sliders&&<span>🔲 {entry.form.sliders}sl</span>}
-            {entry.form.maritalStatus&&<span>👥 {entry.form.maritalStatus}</span>}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  return(
-    <div style={{height:"calc(100vh - 100px)",overflow:"hidden",display:"flex",flexDirection:"column"}}>
-      <div style={{background:"var(--bg-surface)",borderBottom:"1px solid var(--border)",padding:"10px 20px",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-        <div className="seg-control">
-          {[["intake","📋 Intake"],["log","📄 Log"]].map(([v,label])=>(
-            <button key={v} className={`seg-btn${trackerView===v?" active":""}`} onClick={()=>setTrackerView(v)}>{label}</button>
-          ))}
-        </div>
-        {trackerView==="log"&&(
-          <div style={{display:"flex",gap:5,marginLeft:"auto"}}>
-            {["All","RJ","BR","JF"].map(d=>(
-              <button key={d} onClick={()=>setFilterDispatcher(d)} style={{padding:"5px 12px",borderRadius:"var(--radius-sm)",fontFamily:"inherit",fontSize:11,cursor:"pointer",border:`1.5px solid ${filterDispatcher===d?(dispColor(d)==="#64748b"?"var(--text-secondary)":dispColor(d)):"var(--border)"}`,background:filterDispatcher===d?"rgba(255,255,255,.04)":"transparent",color:filterDispatcher===d?(dispColor(d)==="#64748b"?"var(--text-secondary)":dispColor(d)):"var(--text-muted)",fontWeight:filterDispatcher===d?700:400}}>{d}</button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {trackerView==="intake"&&(
-        <div style={{flex:1,overflowY:"auto",maxWidth:480,width:"100%",padding:20,alignSelf:"center"}}>
-          <div style={{marginBottom:20}}>
-            <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".08em",marginBottom:10,textTransform:"uppercase",fontWeight:700}}>Who are you?</div>
-            <div style={{display:"flex",gap:8}}>
-              {DISPATCHERS.map(d=>(
-                <div key={d.id} onClick={()=>selectDispatcher(d.id)} style={{flex:1,padding:"14px 8px",borderRadius:"var(--radius)",textAlign:"center",cursor:"pointer",border:`2px solid ${dispatcher===d.id?d.color:"var(--border)"}`,background:dispatcher===d.id?d.bg:"var(--bg-surface)",transition:"all .15s"}}>
-                  <div style={{fontSize:22,fontWeight:900,color:dispatcher===d.id?d.color:"var(--text-muted)",lineHeight:1,fontFamily:"var(--font-display)"}}>{d.id}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-          {!dispatcher&&<div style={{textAlign:"center",color:"var(--text-muted)",padding:"40px 0",fontSize:13}}>Select your name above to begin logging</div>}
-          {dispatcher&&(
-            <>
-              {!interactionType&&(
-                <div>
-                  <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".08em",marginBottom:10,textTransform:"uppercase",fontWeight:700}}>Interaction Type</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                    {INTERACTION_TYPES.map(t=>(
-                      <div key={t} onClick={()=>setInteractionType(t)} style={{padding:"18px 10px",borderRadius:"var(--radius)",textAlign:"center",cursor:"pointer",border:`1.5px solid ${typeColor(t)}22`,background:`${typeColor(t)}0a`,color:typeColor(t),fontWeight:700,fontSize:13,fontFamily:"var(--font-display)",transition:"all .15s"}}
-                        onMouseEnter={e=>{e.currentTarget.style.borderColor=typeColor(t)+"66";}}
-                        onMouseLeave={e=>{e.currentTarget.style.borderColor=typeColor(t)+"22";}}>
-                        {t}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {interactionType&&(
-                <div>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-                    <div style={{fontSize:13,fontWeight:700,color:typeColor(interactionType),fontFamily:"var(--font-display)"}}>{interactionType}</div>
-                    <button onClick={resetFlow} style={{background:"none",border:"none",color:"var(--text-muted)",cursor:"pointer",fontSize:11,fontFamily:"inherit"}}>✕ Reset</button>
-                  </div>
-                  {interactionType==="Dispatch"&&(
-                    <div>
-                      <div style={{marginBottom:12,position:"relative"}}>
-                        <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".06em",marginBottom:6,textTransform:"uppercase",fontWeight:700}}>Rep</div>
-                        <input value={repSearch} onChange={e=>{setRepSearch(e.target.value);setSelectedRep("");}} placeholder="Type first or last name..."
-                          style={{background:"var(--bg-elevated)",border:`1px solid ${selectedRep?"#38bdf8":"var(--border)"}`,borderRadius:"var(--radius-sm)",padding:"7px 10px",color:"var(--text-primary)",fontSize:12,fontFamily:"inherit",outline:"none",width:"100%"}}/>
-                        {repSearch&&!selectedRep&&(()=>{
-                          const filtered=activeReps.filter(r=>r.toLowerCase().includes(repSearch.toLowerCase()));
-                          return filtered.length>0?(
-                            <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:20,background:"var(--bg-surface)",border:"1px solid var(--border-strong)",borderRadius:"var(--radius-sm)",maxHeight:160,overflowY:"auto",marginTop:2,boxShadow:"0 8px 24px rgba(0,0,0,.4)"}}>
-                              {filtered.map(r=>(
-                                <div key={r} onMouseDown={()=>{setSelectedRep(r);setRepSearch(r);}} style={{padding:"8px 12px",cursor:"pointer",fontSize:12,color:"var(--text-secondary)",borderBottom:"1px solid var(--border)"}}
-                                  onMouseEnter={e=>e.currentTarget.style.background="rgba(56,189,248,.08)"}
-                                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{r}</div>
-                              ))}
-                            </div>
-                          ):null;
-                        })()}
-                        {selectedRep&&<div style={{marginTop:5,fontSize:11,color:"#38bdf8",fontWeight:700}}>✓ {selectedRep}<span onClick={()=>{setSelectedRep("");setRepSearch("");}} style={{marginLeft:8,color:"var(--text-muted)",cursor:"pointer",fontWeight:400}}>✕</span></div>}
-                      </div>
-                      <div style={{marginBottom:12}}>
-                        <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".06em",marginBottom:8,textTransform:"uppercase",fontWeight:700}}>Interaction</div>
-                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-                          {DISPATCH_SUBTYPES.map(s=>(
-                            <div key={s} onClick={()=>setDispatchSubtype(s)} style={{padding:"8px 10px",borderRadius:"var(--radius-sm)",cursor:"pointer",textAlign:"center",fontSize:11,border:`1.5px solid ${dispatchSubtype===s?"#38bdf8":"var(--border)"}`,background:dispatchSubtype===s?"rgba(56,189,248,.1)":"var(--bg-elevated)",color:dispatchSubtype===s?"#38bdf8":"var(--text-muted)",transition:"all .12s"}}>{s}</div>
-                          ))}
-                        </div>
-                      </div>
-                      <div style={{marginBottom:14}}>
-                        <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase",fontWeight:700}}>Note (optional)</div>
-                        <textarea value={dispatchNote} onChange={e=>setDispatchNote(e.target.value)} placeholder="Additional detail..." style={{background:"var(--bg-elevated)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 10px",color:"var(--text-primary)",fontSize:12,fontFamily:"inherit",outline:"none",width:"100%",minHeight:60,resize:"vertical"}}/>
-                        {selectedRep&&dispatchSubtype&&(
-                          <div style={{marginTop:6,padding:"7px 10px",background:"rgba(56,189,248,.05)",border:"1px solid rgba(56,189,248,.15)",borderRadius:"var(--radius-sm)",fontSize:10,color:"var(--text-muted)",lineHeight:1.6,fontStyle:"italic"}}>
-                            📋 Preview: <span style={{color:"var(--text-secondary)"}}>Rep {(()=>{const p=selectedRep.includes(",")?selectedRep.split(",").map(s=>s.trim()):null;return p?`${p[1]} ${p[0]}`:selectedRep;})()}, called in [time] stating {dispatchSubtype}{dispatchNote.trim()?" - "+dispatchNote.trim():""}</span>
-                          </div>
-                        )}
-                      </div>
-                      <button onClick={()=>{if(!selectedRep||!dispatchSubtype)return;submitEntry(null);}} disabled={!selectedRep||!dispatchSubtype} className="btn-primary" style={{width:"100%",padding:"10px 0",fontSize:13,opacity:(!selectedRep||!dispatchSubtype)?.45:1,cursor:(!selectedRep||!dispatchSubtype)?"not-allowed":"pointer"}}>Log Entry</button>
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {[
+                    ["Net Volume",trendLabel(detailData.deltas.vol),detailData.deltas.vol],
+                    ["STD% Δ",formatDeltaPp(detailData.deltas.std),detailData.deltas.std],
+                    ["OTD% Δ",formatDeltaPp(detailData.deltas.otd),detailData.deltas.otd],
+                    ["Avg Deal Δ",formatDeltaMoney(detailData.deltas.deal),detailData.deltas.deal],
+                  ].map(([label,val,raw])=>(
+                    <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 11px",background:"var(--bg-elevated)",borderRadius:"var(--radius-sm)",border:"1px solid var(--border)"}}>
+                      <span style={{fontSize:11,color:"var(--text-muted)"}}>{label}</span>
+                      <span style={{fontSize:12,fontWeight:700,color:deltaColor(raw),fontFamily:"var(--font-mono)"}}>{val}</span>
                     </div>
-                  )}
-                  {(interactionType==="Setting"||interactionType==="Confirming")&&<ConfirmingForm onSubmit={submitEntry}/>}
-                  {interactionType==="Other"&&(
-                    <div>
-                      <div style={{marginBottom:12}}>
-                        <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".06em",marginBottom:8,textTransform:"uppercase",fontWeight:700}}>Rep (optional)</div>
-                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,maxHeight:160,overflowY:"auto"}}>
-                          <div onClick={()=>setSelectedRep("")} style={{padding:"7px 10px",borderRadius:"var(--radius-sm)",cursor:"pointer",fontSize:11,border:`1.5px solid ${selectedRep===""?"#a78bfa":"var(--border)"}`,background:selectedRep===""?"rgba(167,139,250,.1)":"var(--bg-elevated)",color:selectedRep===""?"var(--text-primary)":"var(--text-muted)",textAlign:"center",fontStyle:"italic"}}>— none —</div>
-                          {activeReps.map(r=>(
-                            <div key={r} onClick={()=>setSelectedRep(r)} style={{padding:"7px 10px",borderRadius:"var(--radius-sm)",cursor:"pointer",fontSize:11,fontWeight:selectedRep===r?700:400,border:`1.5px solid ${selectedRep===r?"#a78bfa":"var(--border)"}`,background:selectedRep===r?"rgba(167,139,250,.1)":"var(--bg-elevated)",color:selectedRep===r?"var(--text-primary)":"var(--text-muted)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r}</div>
-                          ))}
-                        </div>
-                      </div>
-                      <div style={{marginBottom:12}}>
-                        <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".06em",marginBottom:5,textTransform:"uppercase",fontWeight:700}}>Note</div>
-                        <textarea value={otherNote} onChange={e=>setOtherNote(e.target.value)} placeholder="What happened?" style={{background:"var(--bg-elevated)",border:"1px solid var(--border)",borderRadius:"var(--radius-sm)",padding:"8px 10px",color:"var(--text-primary)",fontSize:12,fontFamily:"inherit",outline:"none",width:"100%",minHeight:80,resize:"vertical"}}/>
-                      </div>
-                      <button onClick={()=>submitEntry(null)} disabled={!otherNote.trim()} className="btn-primary" style={{width:"100%",padding:"10px 0",fontSize:13,background:"linear-gradient(135deg,#a78bfa,#6366f1)",opacity:!otherNote.trim()?.45:1,cursor:!otherNote.trim()?"not-allowed":"pointer"}}>Log Entry</button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {trackerView==="log"&&(
-        <div style={{flex:1,overflowY:"auto",padding:20}}>
-          {urgent.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).length>0&&(
-            <div style={{marginBottom:18,background:"rgba(248,113,113,.04)",border:"1px solid rgba(248,113,113,.2)",borderRadius:"var(--radius-lg)",padding:14}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-                <span style={{fontSize:13,fontWeight:800,color:"#f87171",fontFamily:"var(--font-display)"}}>🚨 URGENT</span>
-                <span style={{fontSize:11,color:"#f87171",opacity:.6}}>— tasks over 5 minutes</span>
-                <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:"#f87171",background:"rgba(248,113,113,.12)",padding:"2px 8px",borderRadius:12}}>{urgent.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).length}</span>
-              </div>
-              {urgent.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).map(e=><LogEntry key={e.id} entry={e}/>)}
-            </div>
-          )}
-          {active.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).map(e=><LogEntry key={e.id} entry={e}/>)}
-          {done.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).length>0&&(
-            <div style={{marginTop:18}}>
-              <div style={{fontSize:10,color:"var(--text-faint)",letterSpacing:".08em",textTransform:"uppercase",marginBottom:8,paddingTop:8,borderTop:"1px solid var(--border)"}}>Completed</div>
-              {done.filter(e=>filterDispatcher==="All"||e.dispatcher===filterDispatcher).map(e=><LogEntry key={e.id} entry={e}/>)}
-            </div>
-          )}
-          {filteredLog.length===0&&<div style={{textAlign:"center",color:"var(--text-faint)",padding:"60px 0",fontSize:13}}>No activity logged yet</div>}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── DASHBOARD TAB ───────────────────────────────────────────────────────────
-function DashboardTab({r30Data,ytdData,history,markets,marketList,onOpenScorecard}){
-
-  const activeReps=useMemo(()=>{
-    const src=r30Data||ytdData;
-    return(src?.reps||[]).filter(r=>r.tier!=="⛔ Excluded"&&markets[r]!=="⛔ Terminated");
-  },[r30Data,ytdData,markets]);
-
-  // ── derive team averages ──
-  const teamAvg=useMemo(()=>{
-    if(!activeReps.length)return{};
-    const avg=f=>activeReps.map(r=>r[f]??0).reduce((a,b)=>a+b,0)/activeReps.length;
-    return{net_vol:avg("net_vol"),std_pct:avg("std_pct"),fallout_rate:avg("fallout_rate"),net_issue_rate:avg("net_issue_rate"),avg_deal:avg("avg_deal")};
-  },[activeReps]);
-
-  // ── top performers: ranked by score, tier Elite/Strong, decent sample ──
-  const topPerformers=useMemo(()=>{
-    return [...activeReps]
-      .filter(r=>r.rank!=="-"&&r.demo>=5)
-      .sort((a,b)=>a.rank-b.rank)
-      .slice(0,5);
-  },[activeReps]);
-
-  // ── needs attention: declining trend OR high fallout OR low confidence ──
-  const needsAttention=useMemo(()=>{
-    if(!r30Data||!ytdData)return[];
-    return activeReps
-      .filter(r=>{
-        const ytdR=ytdData.reps?.find(x=>x.rep===r.rep);
-        if(!ytdR)return false;
-        const falloutHigh=r.fallout_rate>(teamAvg.fallout_rate*1.3);
-        const stdDropping=(r.std_pct-ytdR.std_pct)<-0.04;
-        const volDropping=(r.net_vol-ytdR.net_vol)<-(teamAvg.net_vol*0.15);
-        const lowSample=r.demo<8&&r.rank!=="-";
-        return falloutHigh||stdDropping||volDropping||lowSample;
-      })
-      .sort((a,b)=>b.fallout_rate-a.fallout_rate)
-      .slice(0,5);
-  },[activeReps,r30Data,ytdData,teamAvg]);
-
-  // ── momentum rows: compare r30 vs ytd ──
-  const momentumRows=useMemo(()=>{
-    if(!r30Data||!ytdData)return{heating:[],cooling:[]};
-    const rows=[];
-    for(const r30R of (r30Data.reps||[]).filter(r=>r.tier!=="⛔ Excluded"&&r.demo>=5)){
-      const ytdR=ytdData.reps?.find(x=>x.rep===r30R.rep);
-      if(!ytdR)continue;
-      let composite=0;
-      for(const m of SIGNAL_METRICS){
-        const r30v=m.key==="_gap"?gapPts(r30R):r30R[m.key];
-        const ytdv=m.key==="_gap"?gapPts(ytdR):ytdR[m.key];
-        composite+=signal(r30v,ytdv,m.higherBetter).s;
-      }
-      rows.push({rep:r30R.rep,tier:r30R.tier,composite,r30R,ytdR});
-    }
-    rows.sort((a,b)=>b.composite-a.composite);
-    return{heating:rows.slice(0,4),cooling:[...rows].reverse().slice(0,4)};
-  },[r30Data,ytdData]);
-
-  // ── market signals ──
-  const marketSignals=useMemo(()=>{
-    if(!marketList.length||!activeReps.length)return[];
-    return marketList.map(mkt=>{
-      const reps=activeReps.filter(r=>markets[r.rep]===mkt);
-      if(!reps.length)return null;
-      const sum=f=>reps.reduce((a,r)=>a+(r[f]??0),0);
-      const totalGross=sum("gross_iss");
-      const normNetVol=totalGross>0?(sum("net_vol")/totalGross)*100:0;
-      const avgScore=reps.reduce((a,r)=>a+r.score,0)/reps.length;
-      const avgFallout=sum("fallout_rate")/reps.length;
-      return{name:mkt,repCount:reps.length,normNetVol,avgScore,avgFallout,totalNetVol:sum("net_vol")};
-    }).filter(Boolean).sort((a,b)=>b.normNetVol-a.normNetVol);
-  },[activeReps,markets,marketList]);
-
-  // ── system insights ──
-  const systemInsights=useMemo(()=>{
-    if(!activeReps.length)return[];
-    const insights=[];
-    const topTier=activeReps.filter(r=>r.tier==="🥇 Elite"||r.tier==="🥈 Strong");
-    const highFallout=activeReps.filter(r=>r.fallout_rate>teamAvg.fallout_rate*1.3);
-    const lowStick=activeReps.filter(r=>r.net_issue_rate<0.6&&r.demo>=8);
-    const hotReps=momentumRows.heating.filter(r=>r.composite>=4);
-    const coldReps=momentumRows.cooling.filter(r=>r.composite<=-4);
-
-    if(topTier.length>0){
-      const avgStd=topTier.reduce((a,r)=>a+r.std_pct,0)/topTier.length;
-      insights.push({icon:"🏆",type:"good",text:`${topTier.length} top-tier reps averaging ${(avgStd*100).toFixed(0)}% close rate — the ceiling is strong.`,reps:topTier});
-    }
-    if(highFallout.length>=3){
-      insights.push({icon:"⚠️",type:"warn",text:`${highFallout.length} reps have above-average fallout — closed revenue isn't all sticking.`,reps:highFallout});
-    }
-    if(lowStick.length>=2){
-      insights.push({icon:"📉",type:"warn",text:`${lowStick.length} reps with low stick rates — closes are happening but not netting to revenue.`,reps:lowStick});
-    }
-    if(hotReps.length>0){
-      insights.push({icon:"🔥",type:"good",text:`${hotReps.length} rep${hotReps.length>1?"s are":"is"} on a hot streak over the last 30 days — momentum is building.`,reps:hotReps});
-    }
-    if(coldReps.length>0){
-      insights.push({icon:"❄️",type:"caution",text:`${coldReps.length} rep${coldReps.length>1?"s are":"is"} trending down vs YTD baseline — worth a conversation.`,reps:coldReps});
-    }
-    if(marketSignals.length>=2){
-      const best=marketSignals[0],worst=marketSignals[marketSignals.length-1];
-      if(best.normNetVol>worst.normNetVol*1.4){
-        insights.push({icon:"🗺",type:"info",text:`${best.name} is significantly outperforming ${worst.name} per appointment — look at what's driving the gap.`,reps:[]});
-      }
-    }
-    return insights.slice(0,5);
-  },[activeReps,teamAvg,momentumRows,marketSignals]);
-
-  // ── rep one-liner ──
-  const repOneLiner=(r,ytdR)=>{
-    if(r.demo<8)return"Low sample — monitor before drawing conclusions";
-    if(r.tier==="🥇 Elite"&&r.net_issue_rate>=.80)return"Elite closer with clean, durable deals";
-    if(r.tier==="🥇 Elite")return"Elite volume producer — check stick rate for deal quality";
-    if(r.fallout_rate>teamAvg.fallout_rate*1.3&&r.std_pct>=.30)return"Strong closer but deals are falling through after the sale";
-    if(r.net_issue_rate<.60&&r.demo>=8)return"Closes are happening but not converting to real revenue";
-    if(ytdR&&r.std_pct-ytdR.std_pct>=.05)return"Close rate improving over last 30 days";
-    if(ytdR&&r.std_pct-ytdR.std_pct<=-0.05)return"Close rate slipping vs year-to-date baseline";
-    if(r.std_pct<.22)return"Below-floor close rate — demo conversion needs focus";
-    if(r.fallout_rate<teamAvg.fallout_rate*.7)return"Deal quality is excellent — closes are clean and stick";
-    return"Consistent performer across key metrics";
-  };
-
-  const momentumLabel=c=>{
-    if(c>=8)return{text:"🔥 On Fire",color:"#34d399"};
-    if(c>=4)return{text:"📈 Heating",color:"#86efac"};
-    if(c>=1)return{text:"↗ Rising",color:"#94a3b8"};
-    if(c===0)return{text:"➡ Stable",color:"#64748b"};
-    if(c>=-3)return{text:"↘ Softening",color:"#fb923c"};
-    return{text:"❄ Cooling",color:"#38bdf8"};
-  };
-
-  const [expandedInsight,setExpandedInsight]=useState(null);
-  const insightStyles={
-    good:{accent:"#34d399",bg:"rgba(52,211,153,.05)",border:"rgba(52,211,153,.15)",borderExp:"rgba(52,211,153,.40)"},
-    warn:{accent:"#fbbf24",bg:"rgba(251,191,36,.05)",border:"rgba(251,191,36,.15)",borderExp:"rgba(251,191,36,.42)"},
-    caution:{accent:"#fb923c",bg:"rgba(251,146,60,.04)",border:"rgba(251,146,60,.13)",borderExp:"rgba(251,146,60,.35)"},
-    info:{accent:"#38bdf8",bg:"rgba(56,189,248,.04)",border:"rgba(56,189,248,.14)",borderExp:"rgba(56,189,248,.38)"},
-  };
-  const getRepMetric=(ins,rep)=>{
-    if(ins.icon==="⚠️"&&ins.type==="warn")return{label:"Fallout%",value:fP(rep.fallout_rate)};
-    if(ins.icon==="📉")return{label:"NetStk%",value:fP(rep.net_issue_rate)};
-    return{label:"Score",value:(rep.score??0).toFixed(4)};
-  };
-
-
-  const noData=!r30Data&&!ytdData;
-  const hasTrends=!!(r30Data&&ytdData);
-
-  if(noData){
-    return(
-      <div className="empty-state" style={{height:"calc(100vh - 52px)"}}>
-        <div className="empty-icon">📊</div>
-        <div className="empty-title">No data uploaded yet</div>
-        <div className="empty-sub">Upload a Rolling 30 or YTD CSV to see your dashboard</div>
-      </div>
-    );
-  }
-
-  // ── LAYOUT ──
-  return(
-    <div style={{padding:"22px 26px",overflowY:"auto",height:"calc(100vh - 52px)",background:"var(--bg-base)"}}>
-
-      {/* ── DATE CONTEXT ── */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22}}>
-        <div>
-          <div style={{fontWeight:800,fontSize:20,color:"var(--text-primary)",fontFamily:"var(--font-display)",letterSpacing:"-.01em"}}>Performance Overview</div>
-          <div style={{fontSize:12,color:"var(--text-muted)",marginTop:3}}>
-            {(r30Data||ytdData)?.date_range&&<span style={{fontFamily:"var(--font-mono)"}}>{(r30Data||ytdData).date_range}</span>}
-            {" · "}{activeReps.length} active reps
-            {!hasTrends&&<span style={{color:"#fbbf24",marginLeft:10}}>⚠ Upload both R30 + YTD for trend data</span>}
-          </div>
-        </div>
-        <div style={{display:"flex",gap:8}}>
-          {[["net_vol",f$(Math.round(activeReps.reduce((a,r)=>a+r.net_vol,0))),"Total Net Vol","#34d399"],
-            ["std_pct",(activeReps.reduce((a,r)=>a+r.std_pct,0)/Math.max(activeReps.length,1)*100).toFixed(1)+"%","Avg Close Rate","#38bdf8"],
-          ].map(([k,v,l,c])=>(
-            <div key={k} style={{background:"var(--bg-surface)",border:`1px solid ${c}22`,borderRadius:"var(--radius)",padding:"9px 16px",textAlign:"right"}}>
-              <div style={{fontSize:10,color:"var(--text-muted)",marginBottom:2,letterSpacing:".05em"}}>{l}</div>
-              <div style={{fontSize:16,fontWeight:800,color:c,fontFamily:"var(--font-mono)"}}>{v}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* ── ROW 1: TOP PERFORMERS + NEEDS ATTENTION ── */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
-
-        {/* TOP PERFORMERS */}
-        <div style={{background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
-            <span style={{fontSize:15}}>🏆</span>
-            <div>
-              <div style={{fontWeight:800,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>Top Performers</div>
-              <div style={{fontSize:10,color:"var(--text-muted)"}}>Ranked by composite score</div>
-            </div>
-          </div>
-          {topPerformers.length===0&&<div style={{color:"var(--text-muted)",fontSize:12,padding:"20px 0",textAlign:"center"}}>Need more data (5+ demos per rep)</div>}
-          {topPerformers.map((r,i)=>{
-            const ytdR=ytdData?.reps?.find(x=>x.rep===r.rep);
-            const tc=TC[r.tier]??"#64748b";
-            const sigScore=ytdR?signal(r.score,ytdR.score,true):{s:0,icon:"➡",color:"#64748b"};
-            return(
-              <div key={r.rep} onClick={()=>onOpenScorecard(r.rep)}
-                style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:"var(--radius)",marginBottom:7,cursor:"pointer",background:"var(--bg-elevated)",border:"1px solid var(--border)",transition:"all .15s",animationDelay:`${i*.06}s`}}
-                className="fade-up"
-                onMouseEnter={e=>{e.currentTarget.style.borderColor="var(--border-strong)";e.currentTarget.style.background="var(--bg-hover)";}}
-                onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border)";e.currentTarget.style.background="var(--bg-elevated)";}}>
-                <div style={{width:28,height:28,borderRadius:"50%",background:`${tc}20`,border:`1.5px solid ${tc}55`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:900,color:tc,flexShrink:0,fontFamily:"var(--font-display)"}}>
-                  {i+1}
-                </div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:700,fontSize:13,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.rep}</div>
-                  <div style={{fontSize:10,color:"var(--text-muted)",marginTop:1,lineHeight:1.4}}>{repOneLiner(r,ytdR)}</div>
-                </div>
-                <div style={{textAlign:"right",flexShrink:0}}>
-                  <div style={{fontSize:13,color:sigScore.color,fontWeight:700}}>{sigScore.icon}</div>
-                  <div style={{fontSize:10,color:tc,fontWeight:700,fontFamily:"var(--font-mono)"}}>{(r.score*100).toFixed(0)}</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* NEEDS ATTENTION */}
-        <div style={{background:"var(--bg-surface)",border:"1px solid rgba(248,113,113,.18)",borderRadius:"var(--radius-lg)",padding:18}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
-            <span style={{fontSize:15}}>⚠️</span>
-            <div>
-              <div style={{fontWeight:800,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>Needs Attention</div>
-              <div style={{fontSize:10,color:"var(--text-muted)"}}>Declining trend, high fallout, or low confidence</div>
-            </div>
-          </div>
-          {needsAttention.length===0&&(
-            <div style={{color:"#34d399",fontSize:12,padding:"20px 0",textAlign:"center"}}>
-              ✓ No reps flagged right now
-            </div>
-          )}
-          {needsAttention.map((r,i)=>{
-            const ytdR=ytdData?.reps?.find(x=>x.rep===r.rep);
-            const falloutHigh=r.fallout_rate>(teamAvg.fallout_rate*1.3);
-            const stdDrop=ytdR&&(r.std_pct-ytdR.std_pct)<-0.04;
-            const lowSample=r.demo<8;
-            const flags=[];
-            if(falloutHigh)flags.push({label:"High fallout",color:"#f87171"});
-            if(stdDrop)flags.push({label:`STD% ↓${((ytdR.std_pct-r.std_pct)*100).toFixed(1)}pp`,color:"#fb923c"});
-            if(lowSample)flags.push({label:"Low sample",color:"#fbbf24"});
-            if(!falloutHigh&&!stdDrop&&!lowSample)flags.push({label:"Vol dropping",color:"#fb923c"});
-            return(
-              <div key={r.rep} onClick={()=>onOpenScorecard(r.rep)}
-                style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:"var(--radius)",marginBottom:7,cursor:"pointer",background:"rgba(248,113,113,.04)",border:"1px solid rgba(248,113,113,.12)",transition:"all .15s"}}
-                className="fade-up"
-                onMouseEnter={e=>{e.currentTarget.style.background="rgba(248,113,113,.08)";e.currentTarget.style.borderColor="rgba(248,113,113,.25)";}}
-                onMouseLeave={e=>{e.currentTarget.style.background="rgba(248,113,113,.04)";e.currentTarget.style.borderColor="rgba(248,113,113,.12)";}}>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:700,fontSize:13,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.rep}</div>
-                  <div style={{fontSize:10,color:"var(--text-muted)",marginTop:2}}>{repOneLiner(r,ytdR)}</div>
-                </div>
-                <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end",flexShrink:0,maxWidth:140}}>
-                  {flags.slice(0,2).map(f=>(
-                    <span key={f.label} style={{fontSize:9,fontWeight:700,color:f.color,background:`${f.color}18`,padding:"2px 6px",borderRadius:3,border:`1px solid ${f.color}30`,whiteSpace:"nowrap"}}>{f.label}</span>
                   ))}
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ── ROW 2: MOMENTUM ── */}
-      {hasTrends&&(
-        <div style={{background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18,marginBottom:16}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
-            <span style={{fontSize:15}}>📈</span>
-            <div>
-              <div style={{fontWeight:800,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>Trend Movement</div>
-              <div style={{fontSize:10,color:"var(--text-muted)"}}>R30 vs YTD baseline — who's moving and in which direction</div>
+              )}
             </div>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-            {/* HEATING */}
-            <div>
-              <div style={{fontSize:10,color:"#34d399",fontWeight:700,letterSpacing:".07em",textTransform:"uppercase",marginBottom:8}}>🔥 Heating Up</div>
-              {momentumRows.heating.map((r,i)=>{
-                const cl=momentumLabel(r.composite);
-                const stdDelta=r.r30R.std_pct-r.ytdR.std_pct;
+
+          {detailData.insights.length>0&&(
+            <div style={{marginBottom:18}}>
+              <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
+                <span style={{fontSize:11,fontWeight:700,color:"#38bdf8",letterSpacing:".08em",fontFamily:"var(--font-display)"}}>💡 MARKET INSIGHTS</span>
+                <div style={{flex:1,height:1,background:"var(--border)"}}/>
+              </div>
+              {detailData.insights.map((ins,i)=>{
+                const s=insightStyles[ins.type]||insightStyles.caution;
                 return(
-                  <div key={r.rep} onClick={()=>onOpenScorecard(r.rep)}
-                    style={{display:"flex",alignItems:"center",gap:8,padding:"8px 11px",borderRadius:"var(--radius-sm)",marginBottom:5,cursor:"pointer",background:"var(--bg-elevated)",border:"1px solid var(--border)",transition:"all .15s"}}
-                    onMouseEnter={e=>{e.currentTarget.style.borderColor="rgba(52,211,153,.3)";}}
-                    onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border)";}}>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontWeight:600,fontSize:12,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.rep}</div>
-                      <div style={{fontSize:10,color:"var(--text-muted)"}}>{TC[r.tier]&&<span style={{color:TC[r.tier]}}>{r.tier}</span>}</div>
-                    </div>
-                    <div style={{textAlign:"right",flexShrink:0}}>
-                      <div style={{color:cl.color,fontWeight:700,fontSize:11}}>{cl.text}</div>
-                      {stdDelta>0.02&&<div style={{fontSize:9,color:"#34d399",fontFamily:"var(--font-mono)"}}>STD +{(stdDelta*100).toFixed(1)}pp</div>}
-                    </div>
+                  <div key={i} className="insight-item" style={{display:"flex",gap:10,alignItems:"flex-start",background:s.bg,border:`1px solid ${s.border}`,borderRadius:"var(--radius-sm)",padding:"10px 12px",marginBottom:6}}>
+                    <span style={{fontSize:15,flexShrink:0,marginTop:1}}>{ins.icon}</span>
+                    <span style={{fontSize:12,color:"#cbd5e1",lineHeight:1.6}}>{ins.text}</span>
                   </div>
                 );
               })}
-              {momentumRows.heating.length===0&&<div style={{fontSize:11,color:"var(--text-muted)",padding:"12px 0"}}>No reps heating up right now</div>}
             </div>
-            {/* COOLING */}
-            <div>
-              <div style={{fontSize:10,color:"#38bdf8",fontWeight:700,letterSpacing:".07em",textTransform:"uppercase",marginBottom:8}}>❄️ Cooling Off</div>
-              {momentumRows.cooling.map((r,i)=>{
-                const cl=momentumLabel(r.composite);
-                const stdDelta=r.r30R.std_pct-r.ytdR.std_pct;
-                return(
-                  <div key={r.rep} onClick={()=>onOpenScorecard(r.rep)}
-                    style={{display:"flex",alignItems:"center",gap:8,padding:"8px 11px",borderRadius:"var(--radius-sm)",marginBottom:5,cursor:"pointer",background:"var(--bg-elevated)",border:"1px solid var(--border)",transition:"all .15s"}}
-                    onMouseEnter={e=>{e.currentTarget.style.borderColor="rgba(56,189,248,.3)";}}
-                    onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border)";}}>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontWeight:600,fontSize:12,color:"var(--text-primary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.rep}</div>
-                      <div style={{fontSize:10,color:"var(--text-muted)"}}>{TC[r.tier]&&<span style={{color:TC[r.tier]}}>{r.tier}</span>}</div>
+          )}
+
+          <div style={{marginBottom:18}}>
+            <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
+              <span style={{fontSize:11,fontWeight:700,color:"#fbbf24",letterSpacing:".08em",fontFamily:"var(--font-display)"}}>🎯 OPERATIONS SIGNALS</span>
+              <div style={{flex:1,height:1,background:"var(--border)"}}/>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:8}}>
+              {detailData.carrying.length>0&&(
+                <div style={{background:"rgba(52,211,153,.05)",border:"1px solid rgba(52,211,153,.2)",borderRadius:"var(--radius)",padding:"11px 13px"}}>
+                  <div style={{fontSize:10,fontWeight:700,color:"#34d399",letterSpacing:".06em",marginBottom:6}}>🏋 CARRYING</div>
+                  {detailData.carrying.map(r=>(
+                    <div key={r.rep} style={{fontSize:11,color:"var(--text-secondary)",marginBottom:3}}>
+                      {r.rep} <span style={{color:"#34d399",fontFamily:"var(--font-mono)",fontSize:10}}>{f$(r.net_vol)}</span>
                     </div>
-                    <div style={{textAlign:"right",flexShrink:0}}>
-                      <div style={{color:cl.color,fontWeight:700,fontSize:11}}>{cl.text}</div>
-                      {stdDelta<-0.02&&<div style={{fontSize:9,color:"#fb923c",fontFamily:"var(--font-mono)"}}>STD {(stdDelta*100).toFixed(1)}pp</div>}
+                  ))}
+                  <div style={{fontSize:9,color:"var(--text-faint)",marginTop:4}}>Top producers by net volume</div>
+                </div>
+              )}
+              {detailData.moreLeads.length>0&&(
+                <div style={{background:"rgba(56,189,248,.05)",border:"1px solid rgba(56,189,248,.2)",borderRadius:"var(--radius)",padding:"11px 13px"}}>
+                  <div style={{fontSize:10,fontWeight:700,color:"#38bdf8",letterSpacing:".06em",marginBottom:6}}>📤 MORE LEAD SHARE</div>
+                  {detailData.moreLeads.map(r=>(
+                    <div key={r.rep} style={{fontSize:11,color:"var(--text-secondary)",marginBottom:3}}>
+                      {r.rep} <span style={{color:"#38bdf8",fontFamily:"var(--font-mono)",fontSize:10}}>{fP(r.std_pct)} STD</span>
                     </div>
-                  </div>
-                );
-              })}
-              {momentumRows.cooling.length===0&&<div style={{fontSize:11,color:"var(--text-muted)",padding:"12px 0"}}>No reps cooling off right now</div>}
+                  ))}
+                  <div style={{fontSize:9,color:"var(--text-faint)",marginTop:4}}>Strong STD + stick rate</div>
+                </div>
+              )}
+              {detailData.caution.length>0&&(
+                <div style={{background:"rgba(248,113,113,.05)",border:"1px solid rgba(248,113,113,.2)",borderRadius:"var(--radius)",padding:"11px 13px"}}>
+                  <div style={{fontSize:10,fontWeight:700,color:"#f87171",letterSpacing:".06em",marginBottom:6}}>⚠ USE CAUTION</div>
+                  {detailData.caution.map(r=>(
+                    <div key={r.rep} style={{fontSize:11,color:"var(--text-secondary)",marginBottom:3}}>
+                      {r.rep} <span style={{color:"#f87171",fontFamily:"var(--font-mono)",fontSize:10}}>{fP(r.fallout_rate)} fallout</span>
+                    </div>
+                  ))}
+                  <div style={{fontSize:9,color:"var(--text-faint)",marginTop:4}}>Above-average fallout risk</div>
+                </div>
+              )}
+              {detailData.lowSample.length>0&&(
+                <div style={{background:"rgba(251,191,36,.05)",border:"1px solid rgba(251,191,36,.2)",borderRadius:"var(--radius)",padding:"11px 13px"}}>
+                  <div style={{fontSize:10,fontWeight:700,color:"#fbbf24",letterSpacing:".06em",marginBottom:6}}>🔬 LOW SAMPLE</div>
+                  {detailData.lowSample.map(r=>(
+                    <div key={r.rep} style={{fontSize:11,color:"var(--text-secondary)",marginBottom:3}}>
+                      {r.rep} <span style={{color:"#fbbf24",fontFamily:"var(--font-mono)",fontSize:10}}>{fN(r.demo)} demos</span>
+                    </div>
+                  ))}
+                  <div style={{fontSize:9,color:"var(--text-faint)",marginTop:4}}>Treat numbers with caution</div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
+              <span style={{fontSize:11,fontWeight:700,color:"var(--text-primary)",letterSpacing:".08em",fontFamily:"var(--font-display)"}}>👥 REP BREAKDOWN</span>
+              <div style={{flex:1,height:1,background:"var(--border)"}}/>
+              <span style={{fontSize:10,color:"var(--text-muted)"}}>{detailData.sorted.length} reps · click row to open scorecard</span>
+            </div>
+            <div style={{overflowX:"auto",borderRadius:"var(--radius)",border:"1px solid var(--border)"}}>
+              <table className="rank-table">
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Rep</th>
+                    <th>Tier</th>
+                    <th>Demos</th>
+                    <th style={{color:"#34d399"}}>Net Vol</th>
+                    <th style={{color:"#38bdf8"}}>STD%</th>
+                    <th style={{color:"#a78bfa"}}>OTD%</th>
+                    <th style={{color:"#fb923c"}}>Fallout%</th>
+                    <th style={{color:"#34d399"}}>NetStk%</th>
+                    <th style={{color:"#fbbf24"}}>Avg Deal</th>
+                    <th style={{color:"#94a3b8"}}>Confidence</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detailData.sorted.map(r=>{
+                    const tc=TC[r.tier]??"#64748b";
+                    const conf=(r.demo??0)>=20?"✓ High":(r.demo??0)>=10?"~ OK":(r.demo??0)>=5?"⚠ Low":"🔬 Thin";
+                    const confColor=(r.demo??0)>=20?"#34d399":(r.demo??0)>=10?"#fbbf24":(r.demo??0)>=5?"#fb923c":"#94a3b8";
+                    return(
+                      <tr key={r.rep} className="clickable-row" onClick={()=>onOpenScorecard&&onOpenScorecard(r.rep)} style={{cursor:"pointer"}}>
+                        <td style={{color:"var(--text-muted)",fontFamily:"var(--font-mono)",fontWeight:600}}>{r.rank}</td>
+                        <td style={{fontWeight:700,color:"var(--text-primary)",whiteSpace:"nowrap"}}>
+                          {r.rep}
+                          <span className="rep-arrow" style={{marginLeft:6,fontSize:10,color:"var(--text-faint)"}}>↗</span>
+                        </td>
+                        <td><span className="tier-pill" style={{background:`${tc}18`,color:tc}}>{r.tier}</span></td>
+                        <td style={{fontFamily:"var(--font-mono)"}}>{fN(r.demo)}</td>
+                        <td style={{color:"#34d399",fontWeight:700,fontFamily:"var(--font-mono)"}}>{f$(r.net_vol)}</td>
+                        <td style={{color:(r.std_pct??0)>=detailData.coStd?"#34d399":"#f87171",fontWeight:600,fontFamily:"var(--font-mono)"}}>{fP(r.std_pct)}</td>
+                        <td style={{fontFamily:"var(--font-mono)"}}>{fP(r.otd_pct)}</td>
+                        <td style={{color:(r.fallout_rate??0)>detailData.coFallout*1.2?"#f87171":(r.fallout_rate??0)<detailData.coFallout*0.8?"#34d399":"#fbbf24",fontFamily:"var(--font-mono)"}}>{fP(r.fallout_rate)}</td>
+                        <td style={{color:(r.net_issue_rate??0)>=0.75?"#34d399":(r.net_issue_rate??0)<0.60?"#f87171":"#fbbf24",fontFamily:"var(--font-mono)"}}>{fP(r.net_issue_rate)}</td>
+                        <td style={{fontFamily:"var(--font-mono)"}}>{f$(r.avg_deal)}</td>
+                        <td style={{color:confColor,fontSize:11,fontWeight:600}}>{conf}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
       )}
-
-      {/* ── ROW 3: MARKET SIGNALS + SYSTEM INSIGHTS ── */}
-      <div style={{display:"grid",gridTemplateColumns:`${marketSignals.length?"1fr ":""}1fr`,gap:16}}>
-
-        {/* MARKET SIGNALS */}
-        {marketSignals.length>0&&(
-          <div style={{background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
-              <span style={{fontSize:15}}>🗺</span>
-              <div>
-                <div style={{fontWeight:800,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>Market Signals</div>
-                <div style={{fontSize:10,color:"var(--text-muted)"}}>Net vol per appointment — normalized for fair comparison</div>
-              </div>
-            </div>
-            {(()=>{
-              const maxNorm=Math.max(...marketSignals.map(m=>m.normNetVol),0.01);
-              return marketSignals.map((m,i)=>{
-                const pct=Math.max(4,(m.normNetVol/maxNorm)*100);
-                const isTop=i===0,isBot=i===marketSignals.length-1&&marketSignals.length>1;
-                const barColor=isTop?"#34d399":isBot?"#f87171":"#38bdf8";
-                return(
-                  <div key={m.name} style={{marginBottom:12}}>
-                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                      <div style={{display:"flex",alignItems:"center",gap:6}}>
-                        <span style={{fontWeight:600,fontSize:12,color:"var(--text-primary)"}}>{m.name}</span>
-                        {isTop&&<span style={{fontSize:9,color:"#34d399",fontWeight:700,background:"rgba(52,211,153,.1)",padding:"1px 5px",borderRadius:3}}>BEST</span>}
-                        {isBot&&<span style={{fontSize:9,color:"#f87171",fontWeight:700,background:"rgba(248,113,113,.1)",padding:"1px 5px",borderRadius:3}}>LOWEST</span>}
-                      </div>
-                      <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                        <span style={{fontSize:9,color:"var(--text-muted)"}}>{m.repCount} reps</span>
-                        <span style={{fontSize:11,fontWeight:700,color:barColor,fontFamily:"var(--font-mono)"}}>${Math.round(m.normNetVol).toLocaleString()}<span style={{fontSize:9,fontWeight:400,color:"var(--text-muted)"}}>/100</span></span>
-                      </div>
-                    </div>
-                    <div style={{height:6,background:"var(--bg-elevated)",borderRadius:3,overflow:"hidden"}}>
-                      <div style={{height:"100%",width:`${pct}%`,background:barColor,borderRadius:3,transition:"width .5s ease"}}/>
-                    </div>
-                  </div>
-                );
-              });
-            })()}
-          </div>
-        )}
-
-        {/* SYSTEM INSIGHTS */}
-        <div style={{background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
-            <span style={{fontSize:15}}>💡</span>
-            <div>
-              <div style={{fontWeight:800,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>Team Insights</div>
-              <div style={{fontSize:10,color:"var(--text-muted)"}}>What the data means, in plain English</div>
-            </div>
-          </div>
-          {systemInsights.length===0&&<div style={{color:"var(--text-muted)",fontSize:12,padding:"10px 0"}}>Upload more data to generate team-level insights.</div>}
-          {systemInsights.map((ins,i)=>{
-            const s=insightStyles[ins.type]||insightStyles.info;
-            const isExp=expandedInsight===i;
-            const reps=ins.reps||[];
-            return(
-              <div key={i} className="fade-up"
-                onClick={()=>setExpandedInsight(isExp?null:i)}
-                style={{borderRadius:"var(--radius-sm)",marginBottom:7,background:s.bg,border:`1px solid ${isExp?s.borderExp:s.border}`,borderLeft:`3px solid ${isExp?s.accent:s.border}`,animationDelay:`${i*.08}s`,cursor:"pointer",transition:"border-color .15s, border-left-color .15s"}}>
-                <div style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 13px"}}>
-                  <span style={{fontSize:15,flexShrink:0}}>{ins.icon}</span>
-                  <span style={{fontSize:12,color:"var(--text-secondary)",lineHeight:1.6,flex:1}}>{ins.text}</span>
-                  {reps.length>0&&(
-                    <span style={{flexShrink:0,fontSize:10,fontWeight:700,color:s.accent,background:`${s.accent}14`,border:`1px solid ${s.accent}30`,borderRadius:20,padding:"2px 8px",whiteSpace:"nowrap",marginTop:1,transition:"background .15s"}}>
-                      <span style={{fontSize:9,marginRight:3}}>{isExp?"▾":"▸"}</span>{reps.length} rep{reps.length>1?"s":""}
-                    </span>
-                  )}
-                </div>
-                {isExp&&reps.length>0&&(
-                  <div style={{borderTop:`1px solid ${s.accent}22`,padding:"6px 13px 10px"}}>
-                    {reps.map((rep,ri)=>{
-                      const metric=getRepMetric(ins,rep);
-                      return(
-                        <div key={rep.rep} className="fade-up"
-                          onClick={e=>{e.stopPropagation();onOpenScorecard(rep.rep);}}
-                          style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 8px",borderRadius:"var(--radius-sm)",cursor:"pointer",transition:"background .12s",animationDelay:`${ri*.04}s`}}
-                          onMouseEnter={e=>e.currentTarget.style.background="var(--bg-hover)"}
-                          onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                          <span style={{fontSize:12,color:"var(--text-primary)",fontWeight:500}}>{rep.rep}</span>
-                          <span style={{fontSize:11,fontFamily:"var(--font-mono)"}}><span style={{fontSize:9,color:"var(--text-faint)",marginRight:4}}>{metric.label}</span><span style={{color:s.accent,fontWeight:600}}>{metric.value}</span></span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
     </div>
   );
 }
+
 
 // ─── MAIN APP ────────────────────────────────────────────────────────────────
 function App(){
@@ -3075,7 +1726,7 @@ function App(){
               </div>
             )}
             {salesSub==="snapshot"&&(
-              <MarketSnapshotTab r30Data={r30} ytdData={ytd} markets={markets} marketList={marketList}/>
+              <MarketSnapshotTab r30Data={r30} ytdData={ytd} markets={markets} marketList={marketList} onOpenScorecard={setScorecard}/>
             )}
           </div>
         </div>
