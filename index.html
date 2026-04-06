@@ -875,119 +875,254 @@ function Scorecard({rep,r30Data,ytdData,history,onClose,teamAvgs,markets={}}){
   );
 }
 
+// ─── MST HELPERS ─────────────────────────────────────────────────────────────
+// Sum a numeric field across rows
+function sumField(rows,key){return rows.reduce((a,r)=>a+(r[key]??0),0);}
+// Weighted or simple average of a field
+function avgField(rows,key,weightKey=null){
+  if(!rows.length)return 0;
+  if(!weightKey){return sumField(rows,key)/rows.length;}
+  const wSum=sumField(rows,weightKey);
+  if(!wSum)return rows.reduce((a,r)=>a+(r[key]??0),0)/rows.length;
+  return rows.reduce((a,r)=>a+(r[key]??0)*(r[weightKey]??0),0)/wSum;
+}
+// Safe percent
+function pct(n,d){return d===0?0:n/d;}
+// Share of top-k rows by valueKey
+function topKShare(rows,valueKey,k){
+  if(!rows.length)return 0;
+  const total=sumField(rows,valueKey);
+  if(!total)return 0;
+  const sorted=[...rows].sort((a,b)=>(b[valueKey]??0)-(a[valueKey]??0));
+  const topSum=sorted.slice(0,k).reduce((a,r)=>a+(r[valueKey]??0),0);
+  return topSum/total;
+}
+// p-th percentile (0–100) of a numeric array
+function percentile(arr,p){
+  if(!arr.length)return 0;
+  const s=[...arr].sort((a,b)=>a-b);
+  const idx=(p/100)*(s.length-1);
+  const lo=Math.floor(idx),hi=Math.ceil(idx);
+  return s[lo]+(s[hi]-s[lo])*(idx-lo);
+}
+
+// ─── MARKET INSIGHT GENERATOR ────────────────────────────────────────────────
+// Returns up to 6 sorted insights for a market rollup object
+function generateMarketInsights(mkt,bench){
+  const raw=[];
+  const {reps,sumNetVol,sumDemo,avgStd,avgOtd,avgFallout,avgStick,avgDeal,top1Share,top2Share,volTrend}=mkt;
+  const lowSignal=sumDemo<12;
+
+  // 0 — Coverage risk (highest severity)
+  if(reps.length<=1)
+    raw.push({sev:0,icon:"🚨",type:"warn",text:`Single-rep market — any absence eliminates coverage entirely.`});
+  else if(sumDemo<12)
+    raw.push({sev:0,icon:"🔬",type:"caution",text:`Low signal: only ${sumDemo} total demos across ${reps.length} reps — all metrics provisional.`});
+
+  if(!lowSignal){
+    // 1 — Concentration risk
+    if(top1Share>=0.55)
+      raw.push({sev:1,icon:"🏗",type:"warn",text:`Concentrated: top rep drives ${(top1Share*100).toFixed(0)}% of volume. One bad period heavily distorts the market.`});
+    else if(top2Share>=0.70)
+      raw.push({sev:1,icon:"🏗",type:"warn",text:`Concentrated: top 2 reps drive ${(top2Share*100).toFixed(0)}% of volume — limited production depth.`});
+
+    // 2 — Quality mismatch
+    if(avgStd>=0.30&&avgFallout>bench.fallout*1.3)
+      raw.push({sev:2,icon:"⚠️",type:"warn",text:`Quality mismatch: strong close rate (${(avgStd*100).toFixed(1)}%) but fallout (${(avgFallout*100).toFixed(1)}%) is ${Math.round((avgFallout/bench.fallout-1)*100)}% above company avg — closing deals that aren't sticking.`});
+    else if(avgStd>=0.30&&avgStick<0.65)
+      raw.push({sev:2,icon:"🔄",type:"warn",text:`Stick-rate gap: ${(avgStd*100).toFixed(1)}% STD but only ${(avgStick*100).toFixed(1)}% NetStk% — revenue is leaking after the close.`});
+
+    // 3 — OTD↔STD gap
+    const gap=(avgOtd-avgStd)*100;
+    if(gap>=12)
+      raw.push({sev:3,icon:"📉",type:"warn",text:`OTD↔STD gap is ${gap.toFixed(0)}pp — reps are closing on the day but losing ground in the full cycle.`});
+
+    // 4 — Bench strength
+    const atRiskPct=pct(reps.filter(r=>r.tier==="⚠ Below Avg"||r.tier==="🔴 Low").length,reps.length);
+    const topTierPct=pct(reps.filter(r=>r.tier==="🥇 Elite"||r.tier==="🥈 Strong").length,reps.length);
+    if(atRiskPct>=0.5)
+      raw.push({sev:4,icon:"🔴",type:"warn",text:`${Math.round(atRiskPct*100)}% of reps (${reps.filter(r=>r.tier==="⚠ Below Avg"||r.tier==="🔴 Low").length} of ${reps.length}) are at-risk tier — market lacks bench strength.`});
+    else if(topTierPct>=0.5)
+      raw.push({sev:4,icon:"🥇",type:"good",text:`${Math.round(topTierPct*100)}% of reps are Elite or Strong — solid bench depth in this market.`});
+
+    // 5 — Momentum
+    if(volTrend!=null){
+      if(volTrend>=0.15)
+        raw.push({sev:5,icon:"🔥",type:"good",text:`Volume is up ${(volTrend*100).toFixed(0)}% vs the other window — market is trending hot.`});
+      else if(volTrend<=-0.15)
+        raw.push({sev:5,icon:"❄️",type:"warn",text:`Volume is down ${(Math.abs(volTrend)*100).toFixed(0)}% vs the other window — market is cooling.`});
+    }
+
+    // 6 — STD spread / volatility
+    const stdVals=reps.map(r=>r.std_pct*100);
+    if(stdVals.length>=3){
+      const spread=percentile(stdVals,90)-percentile(stdVals,10);
+      if(spread>=12)
+        raw.push({sev:6,icon:"📐",type:"caution",text:`High variance: P10–P90 close-rate spread is ${spread.toFixed(0)}pp — inconsistent production across reps.`});
+    }
+
+    // 7 — Positive quality signal
+    if(avgFallout<bench.fallout*0.80&&avgStick>=0.75)
+      raw.push({sev:7,icon:"✅",type:"good",text:`Clean market: fallout (${(avgFallout*100).toFixed(1)}%) and stick rate (${(avgStick*100).toFixed(1)}%) are both better than company average.`});
+  }
+
+  // Sort by severity, cap at 6
+  raw.sort((a,b)=>a.sev-b.sev);
+  return raw.slice(0,6).map(({sev:_,...rest})=>rest);
+}
+
+// ─── REP BADGE GENERATOR ─────────────────────────────────────────────────────
+function getRepBadges(rep,mkt,bench){
+  const badges=[];
+  if(rep.demo<5){badges.push({label:"Provisional",color:"#94a3b8"});return badges;}
+  if(rep.demo<10)badges.push({label:"Caution",color:"#fbbf24"});
+  if(rep.fallout_rate<bench.fallout*0.75&&rep.net_issue_rate>=0.75)
+    badges.push({label:"Clean closer",color:"#34d399"});
+  else if(rep.fallout_rate>bench.fallout*1.4||rep.net_issue_rate<0.55)
+    badges.push({label:"High-risk",color:"#f87171"});
+  if(rep.avg_deal>mkt.avgDeal*1.25)
+    badges.push({label:"Big tickets",color:"#fbbf24"});
+  return badges.slice(0,2);
+}
+
 // ─── MARKET SNAPSHOT TAB ─────────────────────────────────────────────────────
 function MarketSnapshotTab({r30Data,ytdData,markets,marketList,onOpenScorecard}){
   const [snapWin,setSnapWin]=useState("r30");
   const [selectedMarket,setSelectedMarket]=useState(null);
-  const src=snapWin==="r30"?r30Data:ytdData;
-  const otherSrcForDrill=snapWin==="r30"?ytdData:r30Data;
 
+  const src=snapWin==="r30"?r30Data:ytdData;
+  const otherSrc=snapWin==="r30"?ytdData:r30Data;
+
+  // Company-wide benchmark (weighted by otd_cnt for rates)
+  const companyBench=useMemo(()=>{
+    if(!src?.reps)return{std:0,otd:0,fallout:0,nir:0,avgDeal:0,revPerDemo:0};
+    const active=src.reps.filter(r=>r.tier!=="⛔ Excluded");
+    if(!active.length)return{std:0,otd:0,fallout:0,nir:0,avgDeal:0,revPerDemo:0};
+    const totalDemo=sumField(active,"demo");
+    const totalOtd=sumField(active,"otd_cnt");
+    return{
+      std:avgField(active,"std_pct","demo"),
+      otd:avgField(active,"otd_pct","demo"),
+      fallout:avgField(active,"fallout_rate","otd_cnt"),
+      nir:avgField(active,"net_issue_rate","otd_cnt"),
+      avgDeal:avgField(active,"avg_deal","otd_cnt"),
+      revPerDemo:totalDemo>0?sumField(active,"net_vol")/totalDemo:0,
+    };
+  },[src]);
+
+  // Per-market rollups (richer than marketCards)
+  const marketRollups=useMemo(()=>{
+    if(!src?.reps||!marketList.length)return{};
+    const result={};
+    for(const mkt of marketList){
+      const reps=src.reps.filter(r=>markets[r.rep]===mkt&&r.tier!=="⛔ Excluded");
+      if(!reps.length)continue;
+      const sumNetVol=sumField(reps,"net_vol");
+      const sumDemo=sumField(reps,"demo");
+      const avgStd=avgField(reps,"std_pct","demo");
+      const avgOtd=avgField(reps,"otd_pct","demo");
+      const avgFallout=avgField(reps,"fallout_rate","otd_cnt");
+      const avgStick=avgField(reps,"net_issue_rate","otd_cnt");
+      const avgDeal=avgField(reps,"avg_deal","otd_cnt");
+      const top1Share=topKShare(reps,"net_vol",1);
+      const top2Share=topKShare(reps,"net_vol",2);
+      // Momentum vs other window
+      let volTrend=null;
+      if(otherSrc?.reps){
+        const oReps=otherSrc.reps.filter(r=>markets[r.rep]===mkt&&r.tier!=="⛔ Excluded");
+        if(oReps.length){
+          const oVol=sumField(oReps,"net_vol");
+          volTrend=oVol>0?(sumNetVol-oVol)/oVol:null;
+        }
+      }
+      result[mkt]={reps,sumNetVol,sumDemo,avgStd,avgOtd,avgFallout,avgStick,avgDeal,top1Share,top2Share,volTrend};
+    }
+    return result;
+  },[src,markets,marketList,otherSrc]);
+
+  // Market card display list (sorted by netVol)
   const marketCards=useMemo(()=>{
     if(!src?.reps||!marketList.length)return[];
     return marketList.map(mkt=>{
-      const reps=src.reps.filter(r=>markets[r.rep]===mkt&&r.tier!=="⛔ Excluded");
-      if(!reps.length)return null;
-      const sum=f=>reps.reduce((a,r)=>a+(r[f]??0),0);
-      const avg=f=>sum(f)/reps.length;
-      const netVol=sum("net_vol");
-      const stdPct=avg("std_pct");
-      const otdPct=avg("otd_pct");
-      const avgDeal=avg("avg_deal");
+      const roll=marketRollups[mkt];
+      if(!roll)return null;
+      const{reps,sumNetVol,volTrend}=roll;
       const topRep=reps.slice().sort((a,b)=>b.net_vol-a.net_vol)[0];
       const eliteCount=reps.filter(r=>r.tier==="🥇 Elite"||r.tier==="🥈 Strong").length;
       const atRiskCount=reps.filter(r=>r.tier==="⚠ Below Avg"||r.tier==="🔴 Low").length;
-      let volTrend=null;
-      if(otherSrcForDrill?.reps){
-        const otherReps=otherSrcForDrill.reps.filter(r=>markets[r.rep]===mkt&&r.tier!=="⛔ Excluded");
-        if(otherReps.length){
-          const otherVol=otherReps.reduce((a,r)=>a+(r.net_vol??0),0);
-          volTrend=otherVol>0?((netVol-otherVol)/otherVol):null;
-        }
-      }
-      return{name:mkt,repCount:reps.length,netVol,stdPct,otdPct,avgDeal,topRep,eliteCount,atRiskCount,volTrend};
+      // Card badges (up to 3)
+      const cardBadges=[];
+      if(roll.sumDemo<12)cardBadges.push({label:"Low signal",color:"#94a3b8"});
+      if(roll.top2Share>=0.70&&roll.reps.length>=3)cardBadges.push({label:"Concentrated",color:"#fb923c"});
+      if(volTrend!=null&&volTrend>=0.15)cardBadges.push({label:"🔥 Hot",color:"#34d399"});
+      else if(volTrend!=null&&volTrend<=-0.15)cardBadges.push({label:"❄ Cold",color:"#38bdf8"});
+      return{
+        name:mkt,repCount:reps.length,
+        netVol:sumNetVol,stdPct:roll.avgStd,otdPct:roll.avgOtd,avgDeal:roll.avgDeal,
+        topRep,eliteCount,atRiskCount,volTrend,cardBadges,
+      };
     }).filter(Boolean).sort((a,b)=>b.netVol-a.netVol);
-  },[src,markets,marketList,snapWin,r30Data,ytdData,otherSrcForDrill]);
+  },[src,markets,marketList,marketRollups]);
 
-  // ── DETAIL DATA for selected market ──
+  // Detail panel data for selected market
   const detailData=useMemo(()=>{
     if(!selectedMarket||!src?.reps)return null;
-    const reps=src.reps.filter(r=>markets[r.rep]===selectedMarket&&r.tier!=="⛔ Excluded");
-    if(!reps.length)return null;
-
-    // sort: rank asc if available, else net_vol desc
+    const roll=marketRollups[selectedMarket];
+    if(!roll)return null;
+    const{reps,sumNetVol,avgStd,avgOtd,avgFallout,avgStick,avgDeal}=roll;
     const sorted=[...reps].sort((a,b)=>{
       if(a.rank!=="-"&&b.rank!=="-")return a.rank-b.rank;
       return b.net_vol-a.net_vol;
     });
-
-    const sum=f=>reps.reduce((a,r)=>a+(r[f]??0),0);
-    const avg=f=>sum(f)/reps.length;
-    const mktNetVol=sum("net_vol");
-    const mktStdPct=avg("std_pct");
-    const mktOtdPct=avg("otd_pct");
-    const mktAvgDeal=avg("avg_deal");
-    const mktFallout=avg("fallout_rate");
-    const mktNir=avg("net_issue_rate");
-    const mktRank=(marketCards.findIndex(m=>m.name===selectedMarket))+1;
+    const mktRankIdx=marketCards.findIndex(m=>m.name===selectedMarket);
+    const mktRank=mktRankIdx>=0?mktRankIdx+1:"-";
     const topRep=sorted[0];
-
-    // company averages (all active reps)
-    const allActive=src.reps.filter(r=>r.tier!=="⛔ Excluded");
-    const coAvg=f=>allActive.length?allActive.reduce((a,r)=>a+(r[f]??0),0)/allActive.length:0;
-    const coNetVol=coAvg("net_vol")*allActive.length; // total
-    const coStd=coAvg("std_pct");
-    const coFallout=coAvg("fallout_rate");
-    const coNir=coAvg("net_issue_rate");
-    const coAvgDeal=coAvg("avg_deal");
-
-    // deltas vs other window
+    // Deltas vs other window
     let deltas=null;
-    if(otherSrcForDrill?.reps){
-      const otherReps=otherSrcForDrill.reps.filter(r=>markets[r.rep]===selectedMarket&&r.tier!=="⛔ Excluded");
-      if(otherReps.length){
-        const oSum=f=>otherReps.reduce((a,r)=>a+(r[f]??0),0);
-        const oAvg=f=>oSum(f)/otherReps.length;
-        const oNetVol=oSum("net_vol");
+    if(otherSrc?.reps){
+      const oReps=otherSrc.reps.filter(r=>markets[r.rep]===selectedMarket&&r.tier!=="⛔ Excluded");
+      if(oReps.length){
+        const oNetVol=sumField(oReps,"net_vol");
         deltas={
-          vol:oNetVol>0?(mktNetVol-oNetVol)/oNetVol:null,
-          std:mktStdPct-oAvg("std_pct"),
-          otd:mktOtdPct-oAvg("otd_pct"),
-          deal:mktAvgDeal-oAvg("avg_deal"),
+          vol:oNetVol>0?(sumNetVol-oNetVol)/oNetVol:null,
+          std:avgStd-avgField(oReps,"std_pct","demo"),
+          otd:avgOtd-avgField(oReps,"otd_pct","demo"),
+          deal:avgDeal-avgField(oReps,"avg_deal","otd_cnt"),
         };
       }
     }
+    // Ops signals
+    const carrying=[...reps].sort((a,b)=>b.net_vol-a.net_vol).slice(0,2);
+    const moreLeads=reps.filter(r=>r.std_pct>avgStd&&r.net_issue_rate>=0.75&&r.fallout_rate<=avgFallout);
+    const cautionReps=reps.filter(r=>r.demo>=10&&(r.fallout_rate>companyBench.fallout*1.3||r.net_issue_rate<0.60));
+    const lowSample=reps.filter(r=>r.demo<10);
+    // Insights via generator
+    const insights=generateMarketInsights({...roll,avgDeal},companyBench);
+    return{
+      sorted,mktRank,topRep,
+      mktNetVol:sumNetVol,mktStdPct:avgStd,mktOtdPct:avgOtd,
+      mktAvgDeal:avgDeal,mktFallout:avgFallout,mktNir:avgStick,
+      deltas,insights,carrying,moreLeads,
+      caution:cautionReps,lowSample,
+      coFallout:companyBench.fallout,coStd:companyBench.std,
+    };
+  },[selectedMarket,src,markets,marketCards,marketRollups,otherSrc,companyBench]);
 
-    // insights
-    const insights=[];
-    const topTwo=sorted.slice(0,2);
-    const topTwoVol=topTwo.reduce((a,r)=>a+r.net_vol,0);
-    if(reps.length>=3&&topTwoVol>mktNetVol*0.70)
-      insights.push({icon:"⚡",type:"warn",text:`${topTwo.map(r=>r.rep.split(",")[1]?.trim()||r.rep.split(" ")[0]).join(" & ")} are driving ${Math.round(topTwoVol/mktNetVol*100)}% of market volume — high concentration risk.`});
-    if(mktFallout>coFallout*1.25)
-      insights.push({icon:"⚠️",type:"warn",text:`Fallout rate (${(mktFallout*100).toFixed(1)}%) is ${Math.round((mktFallout/coFallout-1)*100)}% above company average — closed deals aren't sticking.`});
-    else if(mktFallout<coFallout*0.8)
-      insights.push({icon:"✅",type:"good",text:`Deal quality is strong — fallout rate (${(mktFallout*100).toFixed(1)}%) is well below company average.`});
-    if(mktStdPct>=0.35&&mktNir<0.65)
-      insights.push({icon:"🔄",type:"warn",text:`Closing well (${(mktStdPct*100).toFixed(1)}% STD) but stick rate is weak (${(mktNir*100).toFixed(1)}% NetStk%) — revenue isn't holding.`});
-    if(mktStdPct>=0.35&&mktNir>=0.75)
-      insights.push({icon:"💪",type:"good",text:`Strong close rate and stick rate — market is producing clean, durable revenue.`});
-    const aboveAvgStd=reps.filter(r=>r.std_pct>coStd).length;
-    if(aboveAvgStd===1&&reps.length>=3)
-      insights.push({icon:"📊",type:"caution",text:`Only 1 of ${reps.length} reps is above company average STD% — closing is concentrated in one rep.`});
-    const lowDemo=reps.filter(r=>r.demo<8).length;
-    if(lowDemo>=reps.length*0.5&&reps.length>=2)
-      insights.push({icon:"🔬",type:"caution",text:`${lowDemo} of ${reps.length} reps have low sample sizes — read these numbers with caution.`});
-    if(mktNetVol>coNetVol*0.20)
-      insights.push({icon:"🏆",type:"good",text:`Top-contributing market — responsible for over 20% of total company net volume.`});
-
-    // ops signals
-    const carrying=sorted.slice().sort((a,b)=>b.net_vol-a.net_vol).slice(0,2);
-    const moreLeads=reps.filter(r=>r.std_pct>=0.32&&r.net_issue_rate>=0.70).slice(0,2);
-    const caution=reps.filter(r=>r.fallout_rate>coFallout*1.3);
-    const lowSample=reps.filter(r=>r.demo<8);
-
-    return{sorted,mktNetVol,mktStdPct,mktOtdPct,mktAvgDeal,mktFallout,mktNir,mktRank,topRep,deltas,insights:insights.slice(0,5),coStd,coFallout,coNir,coAvgDeal,carrying,moreLeads,caution,lowSample};
-  },[selectedMarket,src,markets,marketCards,otherSrcForDrill]);
+  // Company-wide rollup for the banner
+  const company=useMemo(()=>{
+    if(!r30Data?.reps&&!ytdData?.reps)return null;
+    const calc=arr=>{
+      const active=(arr||[]).filter(r=>r.tier!=="⛔ Excluded");
+      return active.length?{
+        netVol:sumField(active,"net_vol"),
+        stdPct:avgField(active,"std_pct"),
+        otdPct:avgField(active,"otd_pct"),
+        avgDeal:avgField(active,"avg_deal"),
+        repCount:active.length,
+      }:null;
+    };
+    return{r30:calc(r30Data?.reps),ytd:calc(ytdData?.reps)};
+  },[r30Data,ytdData]);
 
   const noData=!r30Data&&!ytdData;
   if(noData)return(
@@ -998,11 +1133,17 @@ function MarketSnapshotTab({r30Data,ytdData,markets,marketList,onOpenScorecard})
     </div>
   );
 
+  // Display helpers
   const trendColor=v=>v==null?"#64748b":v>=.1?"#34d399":v>=0?"#86efac":v>-.1?"#fb923c":"#f87171";
   const trendIcon=v=>v==null?"➡":v>=.1?"🔥":v>=0?"↑":v>-.1?"↓":"❄";
   const trendLabel=v=>v==null?"—":((v>=0?"+":"")+((v*100).toFixed(1))+"%");
-  const deltaColor=v=>v==null?"#64748b":v>0?"#34d399":v<0?"#f87171":"#64748b";
-  const deltaLabel=(v,fmt)=>v==null?"—":(v>0?"+":"")+fmt(v);
+  const deltaColor=v=>v==null?"#64748b":v>0.001?"#34d399":v<-0.001?"#f87171":"#64748b";
+  const insightBg={
+    good:{bg:"rgba(52,211,153,.06)",border:"rgba(52,211,153,.2)"},
+    warn:{bg:"rgba(248,113,113,.06)",border:"rgba(248,113,113,.2)"},
+    caution:{bg:"rgba(251,191,36,.06)",border:"rgba(251,191,36,.2)"},
+  };
+  const shortName=rep=>rep.includes(",")?rep.split(",")[1].trim():rep.split(" ")[0];
 
   return(
     <div style={{padding:"20px 24px",animation:"fadeUp .2s ease both"}}>
@@ -1023,48 +1164,35 @@ function MarketSnapshotTab({r30Data,ytdData,markets,marketList,onOpenScorecard})
       </div>
 
       {/* ── COMPANY ROLLUP BANNER ── */}
-      {(()=>{
-        if(!r30Data&&!ytdData)return null;
-        const r30Active=(r30Data?.reps||[]).filter(r=>r.tier!=="⛔ Excluded");
-        const ytdActive=(ytdData?.reps||[]).filter(r=>r.tier!=="⛔ Excluded");
-        const calc=arr=>arr.length?{
-          netVol:arr.reduce((a,r)=>a+(r.net_vol??0),0),
-          stdPct:arr.reduce((a,r)=>a+(r.std_pct??0),0)/arr.length,
-          otdPct:arr.reduce((a,r)=>a+(r.otd_pct??0),0)/arr.length,
-          avgDeal:arr.reduce((a,r)=>a+(r.avg_deal??0),0)/arr.length,
-          repCount:arr.length,
-        }:null;
-        const company={r30:calc(r30Active),ytd:calc(ytdActive)};
-        return(
-          <div style={{background:"var(--bg-surface)",border:"1px solid var(--border-strong)",borderRadius:"var(--radius-lg)",padding:"16px 22px",marginBottom:22,display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr 1fr",gap:"0 28px",alignItems:"center"}}>
-            <div style={{paddingRight:24,borderRight:"1px solid var(--border)"}}>
-              <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".08em",textTransform:"uppercase",fontWeight:700,marginBottom:4}}>Company</div>
-              <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                {r30Data&&<span style={{fontSize:9,padding:"2px 7px",borderRadius:3,background:"rgba(56,189,248,.12)",color:"#38bdf8",fontWeight:700,border:"1px solid rgba(56,189,248,.2)"}}>R30</span>}
-                {ytdData&&<span style={{fontSize:9,padding:"2px 7px",borderRadius:3,background:"rgba(52,211,153,.10)",color:"#34d399",fontWeight:700,border:"1px solid rgba(52,211,153,.2)"}}>YTD</span>}
-              </div>
+      {company&&(
+        <div style={{background:"var(--bg-surface)",border:"1px solid var(--border-strong)",borderRadius:"var(--radius-lg)",padding:"16px 22px",marginBottom:22,display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr 1fr",gap:"0 28px",alignItems:"center"}}>
+          <div style={{paddingRight:24,borderRight:"1px solid var(--border)"}}>
+            <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".08em",textTransform:"uppercase",fontWeight:700,marginBottom:4}}>Company</div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              {r30Data&&<span style={{fontSize:9,padding:"2px 7px",borderRadius:3,background:"rgba(56,189,248,.12)",color:"#38bdf8",fontWeight:700,border:"1px solid rgba(56,189,248,.2)"}}>R30</span>}
+              {ytdData&&<span style={{fontSize:9,padding:"2px 7px",borderRadius:3,background:"rgba(52,211,153,.10)",color:"#34d399",fontWeight:700,border:"1px solid rgba(52,211,153,.2)"}}>YTD</span>}
             </div>
-            {[
-              ["Net Volume","netVol",v=>f$(Math.round(v)),"#34d399"],
-              ["STD%","stdPct",v=>fP(v),"#38bdf8"],
-              ["OTD%","otdPct",v=>fP(v),"#a78bfa"],
-              ["Avg Deal","avgDeal",v=>f$(Math.round(v)),"#fbbf24"],
-            ].map(([label,key,fmt,color])=>{
-              const r30v=company.r30?.[key];
-              const ytdv=company.ytd?.[key];
-              return(
-                <div key={key}>
-                  <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".06em",textTransform:"uppercase",fontWeight:700,marginBottom:6}}>{label}</div>
-                  <div style={{display:"flex",gap:14,alignItems:"baseline"}}>
-                    {r30Data&&<div><div style={{fontSize:9,color:"#38bdf8",marginBottom:1}}>R30</div><div style={{fontSize:15,fontWeight:800,color,fontFamily:"var(--font-mono)"}}>{fmt(r30v??0)}</div></div>}
-                    {ytdData&&<div><div style={{fontSize:9,color:"#34d399",marginBottom:1}}>YTD</div><div style={{fontSize:15,fontWeight:800,color:ytdData?"var(--text-secondary)":color,fontFamily:"var(--font-mono)"}}>{fmt(ytdv??0)}</div></div>}
-                  </div>
-                </div>
-              );
-            })}
           </div>
-        );
-      })()}
+          {[
+            ["Net Volume","netVol",v=>f$(Math.round(v)),"#34d399"],
+            ["STD%","stdPct",v=>fP(v),"#38bdf8"],
+            ["OTD%","otdPct",v=>fP(v),"#a78bfa"],
+            ["Avg Deal","avgDeal",v=>f$(Math.round(v)),"#fbbf24"],
+          ].map(([label,key,fmt,color])=>{
+            const r30v=company.r30?.[key];
+            const ytdv=company.ytd?.[key];
+            return(
+              <div key={key}>
+                <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".06em",textTransform:"uppercase",fontWeight:700,marginBottom:6}}>{label}</div>
+                <div style={{display:"flex",gap:14,alignItems:"baseline"}}>
+                  {r30Data&&<div><div style={{fontSize:9,color:"#38bdf8",marginBottom:1}}>R30</div><div style={{fontSize:15,fontWeight:800,color,fontFamily:"var(--font-mono)"}}>{fmt(r30v??0)}</div></div>}
+                  {ytdData&&<div><div style={{fontSize:9,color:"#34d399",marginBottom:1}}>YTD</div><div style={{fontSize:15,fontWeight:800,color:ytdData?"var(--text-secondary)":color,fontFamily:"var(--font-mono)"}}>{fmt(ytdv??0)}</div></div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── MARKET CARDS ── */}
       {marketCards.length===0?(
@@ -1079,38 +1207,34 @@ function MarketSnapshotTab({r30Data,ytdData,markets,marketList,onOpenScorecard})
               <div key={mkt.name}
                 className="metric-card fade-up"
                 onClick={()=>setSelectedMarket(isSelected?null:mkt.name)}
+                onMouseEnter={e=>{if(!isSelected)e.currentTarget.style.borderColor="var(--border-strong)";}}
+                onMouseLeave={e=>{if(!isSelected)e.currentTarget.style.borderColor="var(--border)";}}
                 style={{
                   animationDelay:`${idx*.05}s`,
                   background:isSelected?"var(--bg-hover)":"var(--bg-surface)",
                   border:`1px solid ${isSelected?"#38bdf8":"var(--border)"}`,
-                  borderRadius:"var(--radius-lg)",
-                  padding:18,
-                  position:"relative",
-                  overflow:"hidden",
-                  cursor:"pointer",
-                  transition:"border-color .15s, background .15s, box-shadow .15s",
-                  boxShadow:isSelected?"0 0 0 2px rgba(56,189,248,.18)":"none",
-                }}
-                onMouseEnter={e=>{if(!isSelected){e.currentTarget.style.borderColor="var(--border-strong)";e.currentTarget.style.background="var(--bg-hover)";}}}
-                onMouseLeave={e=>{if(!isSelected){e.currentTarget.style.borderColor="var(--border)";e.currentTarget.style.background="var(--bg-surface)";}}}
-              >
-                {/* selected indicator */}
-                {isSelected&&<div style={{position:"absolute",top:0,left:0,right:0,height:2,background:"linear-gradient(90deg,#38bdf8,#6366f1)",borderRadius:"var(--radius-lg) var(--radius-lg) 0 0"}}/>}
+                  borderRadius:"var(--radius-lg)",padding:18,
+                  position:"relative",overflow:"hidden",cursor:"pointer",
+                  transition:"border-color .15s, background .15s",
+                  boxShadow:isSelected?"0 0 0 2px rgba(56,189,248,.15)":"none",
+                }}>
+                {isSelected&&<div style={{position:"absolute",top:0,left:0,right:0,height:2,background:"linear-gradient(90deg,#38bdf8,#6366f1)"}}/>}
+                <div style={{position:"absolute",top:14,right:14,width:26,height:26,borderRadius:"50%",background:isSelected?"rgba(56,189,248,.18)":"rgba(56,189,248,.08)",border:`1px solid ${isSelected?"rgba(56,189,248,.45)":"rgba(56,189,248,.18)"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#38bdf8",fontFamily:"var(--font-mono)"}}>{idx+1}</div>
 
-                {/* rank badge */}
-                <div style={{position:"absolute",top:14,right:14,width:26,height:26,borderRadius:"50%",background:isSelected?"rgba(56,189,248,.2)":"rgba(56,189,248,.08)",border:`1px solid ${isSelected?"rgba(56,189,248,.5)":"rgba(56,189,248,.18)"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#38bdf8",fontFamily:"var(--font-mono)"}}>{idx+1}</div>
-
-                {/* market name + rep count */}
+                {/* Card header: name + tier/risk chips + status badges */}
                 <div style={{marginBottom:14}}>
-                  <div style={{fontWeight:800,fontSize:15,color:isSelected?"#38bdf8":"var(--text-primary)",fontFamily:"var(--font-display)",marginBottom:3,transition:"color .15s"}}>{mkt.name}</div>
-                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                    <span style={{fontSize:10,color:"var(--text-muted)"}}>{mkt.repCount} active rep{mkt.repCount!==1?"s":""}</span>
+                  <div style={{fontWeight:800,fontSize:15,color:isSelected?"#38bdf8":"var(--text-primary)",fontFamily:"var(--font-display)",marginBottom:5,transition:"color .15s"}}>{mkt.name}</div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                    <span style={{fontSize:10,color:"var(--text-muted)"}}>{mkt.repCount} rep{mkt.repCount!==1?"s":""}</span>
                     {mkt.eliteCount>0&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:3,background:"rgba(245,158,11,.12)",color:"#f59e0b",fontWeight:700,border:"1px solid rgba(245,158,11,.2)"}}>🥇 {mkt.eliteCount} top tier</span>}
                     {mkt.atRiskCount>0&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:3,background:"rgba(248,113,113,.10)",color:"#f87171",fontWeight:700,border:"1px solid rgba(248,113,113,.2)"}}>⚠ {mkt.atRiskCount} at risk</span>}
+                    {mkt.cardBadges.map(b=>(
+                      <span key={b.label} style={{fontSize:9,padding:"1px 6px",borderRadius:3,background:`${b.color}18`,color:b.color,fontWeight:700,border:`1px solid ${b.color}33`}}>{b.label}</span>
+                    ))}
                   </div>
                 </div>
 
-                {/* 4 key metrics grid */}
+                {/* Key metrics 2×2 */}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
                   {[
                     {label:"Net Volume",val:f$(Math.round(mkt.netVol)),color:"#34d399"},
@@ -1125,7 +1249,7 @@ function MarketSnapshotTab({r30Data,ytdData,markets,marketList,onOpenScorecard})
                   ))}
                 </div>
 
-                {/* volume trend vs other window */}
+                {/* Trend + top producer footer */}
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",borderTop:"1px solid var(--border)",paddingTop:12}}>
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
                     <span style={{fontSize:11}}>{trendIcon(mkt.volTrend)}</span>
@@ -1142,10 +1266,9 @@ function MarketSnapshotTab({r30Data,ytdData,markets,marketList,onOpenScorecard})
                     </div>
                   )}
                 </div>
-
-                {/* click hint */}
-                {!isSelected&&<div style={{marginTop:10,textAlign:"center",fontSize:9,color:"var(--text-faint)",letterSpacing:".05em"}}>CLICK TO DRILL DOWN</div>}
-                {isSelected&&<div style={{marginTop:10,textAlign:"center",fontSize:9,color:"#38bdf8",letterSpacing:".05em",fontWeight:700}}>▼ EXPANDED BELOW</div>}
+                <div style={{marginTop:8,textAlign:"center",fontSize:9,letterSpacing:".06em",color:isSelected?"#38bdf8":"var(--text-faint)",fontWeight:isSelected?700:400}}>
+                  {isSelected?"▼ EXPANDED BELOW":"CLICK TO DRILL DOWN"}
+                </div>
               </div>
             );
           })}
@@ -1153,207 +1276,204 @@ function MarketSnapshotTab({r30Data,ytdData,markets,marketList,onOpenScorecard})
       )}
 
       {/* ── DETAIL PANEL ── */}
-      {selectedMarket&&detailData&&(()=>{
-        const d=detailData;
-        const insightStyles={
-          good:  {bg:"rgba(52,211,153,.06)", border:"rgba(52,211,153,.2)"},
-          warn:  {bg:"rgba(248,113,113,.06)",border:"rgba(248,113,113,.2)"},
-          caution:{bg:"rgba(251,191,36,.06)",border:"rgba(251,191,36,.2)"},
-        };
-        return(
-          <div className="slide-in" style={{background:"var(--bg-surface)",border:"1px solid #38bdf8",borderRadius:"var(--radius-lg)",padding:"22px 24px",marginBottom:20}}>
+      {selectedMarket&&detailData&&(
+        <div className="slide-in" style={{background:"var(--bg-surface)",border:"1px solid #38bdf8",borderRadius:"var(--radius-lg)",padding:"22px 24px",marginBottom:20}}>
 
-            {/* PANEL HEADER */}
-            <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:20}}>
-              <div>
-                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
-                  <div style={{fontWeight:900,fontSize:20,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>{selectedMarket}</div>
-                  <span style={{fontSize:11,color:"#38bdf8",background:"rgba(56,189,248,.1)",padding:"2px 9px",borderRadius:12,fontWeight:700,border:"1px solid rgba(56,189,248,.2)"}}>Rank #{d.mktRank}</span>
-                  <span style={{fontSize:11,color:"var(--text-muted)"}}>{d.sorted.length} rep{d.sorted.length!==1?"s":""}</span>
-                </div>
-                {d.topRep&&<div style={{fontSize:11,color:"var(--text-muted)"}}>Top producer: <span style={{color:"#fbbf24",fontWeight:700}}>{d.topRep.rep}</span> · {f$(d.topRep.net_vol)}</div>}
+          {/* Panel header */}
+          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:20}}>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+                <div style={{fontWeight:900,fontSize:20,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>{selectedMarket}</div>
+                <span style={{fontSize:11,color:"#38bdf8",background:"rgba(56,189,248,.1)",padding:"2px 9px",borderRadius:12,fontWeight:700,border:"1px solid rgba(56,189,248,.2)"}}>Rank #{detailData.mktRank}</span>
+                <span style={{fontSize:11,color:"var(--text-muted)"}}>{detailData.sorted.length} rep{detailData.sorted.length!==1?"s":""}</span>
               </div>
-              <button onClick={()=>setSelectedMarket(null)} className="btn-ghost" style={{flexShrink:0}}>✕ Close</button>
+              {detailData.topRep&&<div style={{fontSize:11,color:"var(--text-muted)"}}>Top producer: <span style={{color:"#fbbf24",fontWeight:700}}>{detailData.topRep.rep}</span> · {f$(detailData.topRep.net_vol)}</div>}
             </div>
+            <button onClick={()=>setSelectedMarket(null)} className="btn-ghost" style={{flexShrink:0}}>✕ Close</button>
+          </div>
 
-            {/* MARKET METRICS + DELTAS */}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:18}}>
-              {/* KEY METRICS */}
-              <div className="section-block" style={{margin:0}}>
-                <SectionHeader icon="📊" title="Market Metrics" color="#38bdf8" compact/>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          {/* Market Metrics + Trend Deltas */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:18}}>
+            <div className="section-block" style={{margin:0}}>
+              <SectionHeader icon="📊" title="Market Metrics" color="#38bdf8" compact/>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                {[
+                  {label:"Net Volume",val:f$(Math.round(detailData.mktNetVol)),color:"#34d399"},
+                  {label:"STD%",val:fP(detailData.mktStdPct),color:"#38bdf8"},
+                  {label:"OTD%",val:fP(detailData.mktOtdPct),color:"#a78bfa"},
+                  {label:"Avg Deal",val:f$(Math.round(detailData.mktAvgDeal)),color:"#fbbf24"},
+                  {label:"Fallout%",val:fP(detailData.mktFallout),color:detailData.mktFallout>detailData.coFallout*1.2?"#f87171":"#34d399"},
+                  {label:"NetStk%",val:fP(detailData.mktNir),color:detailData.mktNir>=0.75?"#34d399":detailData.mktNir<0.60?"#f87171":"#fbbf24"},
+                ].map(({label,val,color})=>(
+                  <div key={label} style={{background:"var(--bg-elevated)",borderRadius:"var(--radius-sm)",padding:"9px 11px",border:"1px solid var(--border)"}}>
+                    <div style={{fontSize:9,color:"var(--text-muted)",letterSpacing:".06em",textTransform:"uppercase",fontWeight:700,marginBottom:3}}>{label}</div>
+                    <div style={{fontSize:14,fontWeight:800,color,fontFamily:"var(--font-mono)"}}>{val}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="section-block" style={{margin:0}}>
+              <SectionHeader icon="📈" title={`vs ${snapWin==="r30"?"YTD":"R30"} Window`} color="#6366f1" compact/>
+              {!detailData.deltas?(
+                <div style={{color:"var(--text-muted)",fontSize:11,padding:"14px 0",textAlign:"center"}}>Upload {snapWin==="r30"?"YTD":"R30"} data to compare windows</div>
+              ):(
+                <div style={{display:"flex",flexDirection:"column",gap:7}}>
                   {[
-                    {label:"Net Volume",val:f$(Math.round(d.mktNetVol)),color:"#34d399"},
-                    {label:"STD%",val:fP(d.mktStdPct),color:"#38bdf8"},
-                    {label:"OTD%",val:fP(d.mktOtdPct),color:"#a78bfa"},
-                    {label:"Avg Deal",val:f$(Math.round(d.mktAvgDeal)),color:"#fbbf24"},
-                    {label:"Fallout%",val:fP(d.mktFallout),color:d.mktFallout>d.coFallout*1.2?"#f87171":"#34d399"},
-                    {label:"NetStk%",val:fP(d.mktNir),color:d.mktNir>=0.75?"#34d399":d.mktNir<0.60?"#f87171":"#fbbf24"},
-                  ].map(({label,val,color})=>(
-                    <div key={label} style={{background:"var(--bg-elevated)",borderRadius:"var(--radius-sm)",padding:"9px 11px",border:"1px solid var(--border)"}}>
-                      <div style={{fontSize:9,color:"var(--text-muted)",letterSpacing:".06em",textTransform:"uppercase",fontWeight:700,marginBottom:3}}>{label}</div>
-                      <div style={{fontSize:14,fontWeight:800,color,fontFamily:"var(--font-mono)"}}>{val}</div>
+                    {label:"Net Volume",val:detailData.deltas.vol,fmt:v=>trendLabel(v)},
+                    {label:"STD% Δ",val:detailData.deltas.std,fmt:v=>(v>0?"+":"")+((v*100).toFixed(1))+"pp"},
+                    {label:"OTD% Δ",val:detailData.deltas.otd,fmt:v=>(v>0?"+":"")+((v*100).toFixed(1))+"pp"},
+                    {label:"Avg Deal Δ",val:detailData.deltas.deal,fmt:v=>(v>0?"+":"")+f$(Math.round(v))},
+                  ].map(({label,val,fmt})=>(
+                    <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 11px",background:"var(--bg-elevated)",borderRadius:"var(--radius-sm)",border:"1px solid var(--border)"}}>
+                      <span style={{fontSize:11,color:"var(--text-muted)"}}>{label}</span>
+                      <span style={{fontSize:12,fontWeight:700,color:deltaColor(val),fontFamily:"var(--font-mono)"}}>{val==null?"—":fmt(val)}</span>
                     </div>
                   ))}
                 </div>
-              </div>
-
-              {/* TREND DELTAS */}
-              <div className="section-block" style={{margin:0}}>
-                <SectionHeader icon="📈" title={`vs ${snapWin==="r30"?"YTD":"R30"} Window`} color="#6366f1" compact/>
-                {!d.deltas?(
-                  <div style={{color:"var(--text-muted)",fontSize:11,padding:"14px 0",textAlign:"center"}}>
-                    Upload {snapWin==="r30"?"YTD":"R30"} data to compare windows
-                  </div>
-                ):(
-                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                    {[
-                      {label:"Net Volume",val:d.deltas.vol,fmt:v=>trendLabel(v),isRatio:true},
-                      {label:"STD% Δ",val:d.deltas.std,fmt:v=>deltaLabel(v,x=>(x*100).toFixed(1)+"pp"),isRatio:false},
-                      {label:"OTD% Δ",val:d.deltas.otd,fmt:v=>deltaLabel(v,x=>(x*100).toFixed(1)+"pp"),isRatio:false},
-                      {label:"Avg Deal Δ",val:d.deltas.deal,fmt:v=>deltaLabel(v,x=>f$(Math.round(x))),isRatio:false},
-                    ].map(({label,val,fmt})=>(
-                      <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 11px",background:"var(--bg-elevated)",borderRadius:"var(--radius-sm)",border:"1px solid var(--border)"}}>
-                        <span style={{fontSize:11,color:"var(--text-muted)"}}>{label}</span>
-                        <span style={{fontSize:12,fontWeight:700,color:deltaColor(val),fontFamily:"var(--font-mono)"}}>{fmt(val)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* INSIGHTS */}
-            {d.insights.length>0&&(
-              <div style={{marginBottom:18}}>
-                <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
-                  <span style={{fontSize:11,fontWeight:700,color:"#38bdf8",letterSpacing:".08em",fontFamily:"var(--font-display)"}}>💡 MARKET INSIGHTS</span>
-                  <div style={{flex:1,height:1,background:"var(--border)"}}/>
-                </div>
-                {d.insights.map((ins,i)=>{
-                  const s=insightStyles[ins.type]||insightStyles.caution;
-                  return(
-                    <div key={i} className="insight-item" style={{background:s.bg,border:`1px solid ${s.border}`,marginBottom:6,animationDelay:`${i*.06}s`}}>
-                      <span style={{fontSize:15,flexShrink:0,marginTop:1}}>{ins.icon}</span>
-                      <span style={{fontSize:12,color:"#cbd5e1",lineHeight:1.6}}>{ins.text}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* OPS SIGNALS */}
-            <div style={{marginBottom:18}}>
-              <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
-                <span style={{fontSize:11,fontWeight:700,color:"#fbbf24",letterSpacing:".08em",fontFamily:"var(--font-display)"}}>🎯 OPERATIONS SIGNALS</span>
-                <div style={{flex:1,height:1,background:"var(--border)"}}/>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:8}}>
-                {d.carrying.length>0&&(
-                  <div style={{background:"rgba(52,211,153,.05)",border:"1px solid rgba(52,211,153,.2)",borderRadius:"var(--radius)",padding:"11px 13px"}}>
-                    <div style={{fontSize:10,fontWeight:700,color:"#34d399",letterSpacing:".06em",marginBottom:6}}>🏋 CARRYING</div>
-                    {d.carrying.map(r=>(
-                      <div key={r.rep} style={{fontSize:11,color:"var(--text-secondary)",marginBottom:3}}>
-                        {r.rep.split(",")[1]?.trim()||r.rep.split(" ")[0]} <span style={{color:"#34d399",fontFamily:"var(--font-mono)",fontSize:10}}>{f$(r.net_vol)}</span>
-                      </div>
-                    ))}
-                    <div style={{fontSize:9,color:"var(--text-faint)",marginTop:4}}>Top producers by volume</div>
-                  </div>
-                )}
-                {d.moreLeads.length>0&&(
-                  <div style={{background:"rgba(56,189,248,.05)",border:"1px solid rgba(56,189,248,.2)",borderRadius:"var(--radius)",padding:"11px 13px"}}>
-                    <div style={{fontSize:10,fontWeight:700,color:"#38bdf8",letterSpacing:".06em",marginBottom:6}}>📤 MORE LEAD SHARE</div>
-                    {d.moreLeads.map(r=>(
-                      <div key={r.rep} style={{fontSize:11,color:"var(--text-secondary)",marginBottom:3}}>
-                        {r.rep.split(",")[1]?.trim()||r.rep.split(" ")[0]} <span style={{color:"#38bdf8",fontFamily:"var(--font-mono)",fontSize:10}}>{(r.std_pct*100).toFixed(0)}% STD</span>
-                      </div>
-                    ))}
-                    <div style={{fontSize:9,color:"var(--text-faint)",marginTop:4}}>Strong STD + stick rate</div>
-                  </div>
-                )}
-                {d.caution.length>0&&(
-                  <div style={{background:"rgba(248,113,113,.05)",border:"1px solid rgba(248,113,113,.2)",borderRadius:"var(--radius)",padding:"11px 13px"}}>
-                    <div style={{fontSize:10,fontWeight:700,color:"#f87171",letterSpacing:".06em",marginBottom:6}}>⚠ USE CAUTION</div>
-                    {d.caution.map(r=>(
-                      <div key={r.rep} style={{fontSize:11,color:"var(--text-secondary)",marginBottom:3}}>
-                        {r.rep.split(",")[1]?.trim()||r.rep.split(" ")[0]} <span style={{color:"#f87171",fontFamily:"var(--font-mono)",fontSize:10}}>{(r.fallout_rate*100).toFixed(1)}% fallout</span>
-                      </div>
-                    ))}
-                    <div style={{fontSize:9,color:"var(--text-faint)",marginTop:4}}>Above-average fallout risk</div>
-                  </div>
-                )}
-                {d.lowSample.length>0&&(
-                  <div style={{background:"rgba(251,191,36,.05)",border:"1px solid rgba(251,191,36,.2)",borderRadius:"var(--radius)",padding:"11px 13px"}}>
-                    <div style={{fontSize:10,fontWeight:700,color:"#fbbf24",letterSpacing:".06em",marginBottom:6}}>🔬 LOW SAMPLE</div>
-                    {d.lowSample.map(r=>(
-                      <div key={r.rep} style={{fontSize:11,color:"var(--text-secondary)",marginBottom:3}}>
-                        {r.rep.split(",")[1]?.trim()||r.rep.split(" ")[0]} <span style={{color:"#fbbf24",fontFamily:"var(--font-mono)",fontSize:10}}>{r.demo} demos</span>
-                      </div>
-                    ))}
-                    <div style={{fontSize:9,color:"var(--text-faint)",marginTop:4}}>Treat numbers with caution</div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* REP BREAKDOWN TABLE */}
-            <div>
-              <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
-                <span style={{fontSize:11,fontWeight:700,color:"var(--text-primary)",letterSpacing:".08em",fontFamily:"var(--font-display)"}}>👥 REP BREAKDOWN</span>
-                <div style={{flex:1,height:1,background:"var(--border)"}}/>
-                <span style={{fontSize:10,color:"var(--text-muted)"}}>{d.sorted.length} reps · click to open scorecard</span>
-              </div>
-              <div style={{overflowX:"auto",borderRadius:"var(--radius)",border:"1px solid var(--border)"}}>
-                <table className="rank-table">
-                  <thead>
-                    <tr>
-                      <th>Rank</th>
-                      <th>Rep</th>
-                      <th>Tier</th>
-                      <th>Demos</th>
-                      <th style={{color:"#34d399"}}>Net Vol</th>
-                      <th style={{color:"#38bdf8"}}>STD%</th>
-                      <th style={{color:"#a78bfa"}}>OTD%</th>
-                      <th style={{color:"#fbbf24"}}>Avg Deal</th>
-                      <th style={{color:"#34d399"}}>NetStk%</th>
-                      <th style={{color:"#fb923c"}}>Fallout%</th>
-                      <th style={{color:"#94a3b8"}}>Confidence</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {d.sorted.map(r=>{
-                      const tc=TC[r.tier]??"#64748b";
-                      const conf=r.demo>=20?"✓ High":r.demo>=10?"~ OK":r.demo>=5?"⚠ Low":"🔬 Thin";
-                      const confColor=r.demo>=20?"#34d399":r.demo>=10?"#fbbf24":r.demo>=5?"#fb923c":"#94a3b8";
-                      return(
-                        <tr key={r.rep} className="clickable-row" onClick={()=>onOpenScorecard&&onOpenScorecard(r.rep)} style={{cursor:"pointer"}}>
-                          <td style={{color:"var(--text-muted)",fontFamily:"var(--font-mono)",fontWeight:600}}>{r.rank}</td>
-                          <td style={{fontWeight:700,color:"var(--text-primary)",whiteSpace:"nowrap"}}>
-                            {r.rep}
-                            <span className="rep-arrow" style={{marginLeft:6,fontSize:10,color:"var(--text-faint)"}}>↗</span>
-                          </td>
-                          <td><span className="tier-pill" style={{background:`${tc}18`,color:tc}}>{r.tier}</span></td>
-                          <td style={{fontFamily:"var(--font-mono)"}}>{fN(r.demo)}</td>
-                          <td style={{color:"#34d399",fontWeight:700,fontFamily:"var(--font-mono)"}}>{f$(r.net_vol)}</td>
-                          <td style={{color:r.std_pct>=d.coStd?"#34d399":"#f87171",fontWeight:600,fontFamily:"var(--font-mono)"}}>{fP(r.std_pct)}</td>
-                          <td style={{fontFamily:"var(--font-mono)"}}>{fP(r.otd_pct)}</td>
-                          <td style={{fontFamily:"var(--font-mono)"}}>{f$(r.avg_deal)}</td>
-                          <td style={{color:r.net_issue_rate>=0.75?"#34d399":r.net_issue_rate<0.60?"#f87171":"#fbbf24",fontFamily:"var(--font-mono)"}}>{fP(r.net_issue_rate)}</td>
-                          <td style={{color:r.fallout_rate>d.coFallout*1.2?"#f87171":r.fallout_rate<d.coFallout*0.8?"#34d399":"#fbbf24",fontFamily:"var(--font-mono)"}}>{fP(r.fallout_rate)}</td>
-                          <td style={{color:confColor,fontSize:11,fontWeight:600}}>{conf}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              )}
             </div>
           </div>
-        );
-      })()}
+
+          {/* Market Insights */}
+          {detailData.insights.length>0&&(
+            <div style={{marginBottom:18}}>
+              <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
+                <span style={{fontSize:11,fontWeight:700,color:"#38bdf8",letterSpacing:".08em",fontFamily:"var(--font-display)"}}>💡 MARKET INSIGHTS</span>
+                <div style={{flex:1,height:1,background:"var(--border)"}}/>
+              </div>
+              {detailData.insights.map((ins,i)=>{
+                const s=insightBg[ins.type]||insightBg.caution;
+                return(
+                  <div key={i} className="insight-item" style={{background:s.bg,border:`1px solid ${s.border}`,marginBottom:6,animationDelay:`${i*.06}s`}}>
+                    <span style={{fontSize:15,flexShrink:0,marginTop:1}}>{ins.icon}</span>
+                    <span style={{fontSize:12,color:"#cbd5e1",lineHeight:1.6}}>{ins.text}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Operations Signals */}
+          <div style={{marginBottom:18}}>
+            <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
+              <span style={{fontSize:11,fontWeight:700,color:"#fbbf24",letterSpacing:".08em",fontFamily:"var(--font-display)"}}>🎯 OPERATIONS SIGNALS</span>
+              <div style={{flex:1,height:1,background:"var(--border)"}}/>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:8}}>
+              {detailData.carrying.length>0&&(
+                <div style={{background:"rgba(52,211,153,.05)",border:"1px solid rgba(52,211,153,.2)",borderRadius:"var(--radius)",padding:"11px 13px"}}>
+                  <div style={{fontSize:10,fontWeight:700,color:"#34d399",letterSpacing:".06em",marginBottom:7}}>🏋 CARRYING</div>
+                  {detailData.carrying.map(r=>(
+                    <div key={r.rep} style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"var(--text-secondary)",marginBottom:4}}>
+                      <span>{shortName(r.rep)}</span>
+                      <span style={{color:"#34d399",fontFamily:"var(--font-mono)",fontSize:10}}>{f$(r.net_vol)}</span>
+                    </div>
+                  ))}
+                  <div style={{fontSize:9,color:"var(--text-faint)",marginTop:4}}>Top producers by volume</div>
+                </div>
+              )}
+              {detailData.moreLeads.length>0&&(
+                <div style={{background:"rgba(56,189,248,.05)",border:"1px solid rgba(56,189,248,.2)",borderRadius:"var(--radius)",padding:"11px 13px"}}>
+                  <div style={{fontSize:10,fontWeight:700,color:"#38bdf8",letterSpacing:".06em",marginBottom:7}}>📤 MORE LEAD SHARE</div>
+                  {detailData.moreLeads.map(r=>(
+                    <div key={r.rep} style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"var(--text-secondary)",marginBottom:4}}>
+                      <span>{shortName(r.rep)}</span>
+                      <span style={{color:"#38bdf8",fontFamily:"var(--font-mono)",fontSize:10}}>{(r.std_pct*100).toFixed(0)}% STD</span>
+                    </div>
+                  ))}
+                  <div style={{fontSize:9,color:"var(--text-faint)",marginTop:4}}>Above-market close + clean deals</div>
+                </div>
+              )}
+              {detailData.caution.length>0&&(
+                <div style={{background:"rgba(248,113,113,.05)",border:"1px solid rgba(248,113,113,.2)",borderRadius:"var(--radius)",padding:"11px 13px"}}>
+                  <div style={{fontSize:10,fontWeight:700,color:"#f87171",letterSpacing:".06em",marginBottom:7}}>⚠ USE CAUTION</div>
+                  {detailData.caution.map(r=>(
+                    <div key={r.rep} style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"var(--text-secondary)",marginBottom:4}}>
+                      <span>{shortName(r.rep)}</span>
+                      <span style={{color:"#f87171",fontFamily:"var(--font-mono)",fontSize:10}}>{(r.fallout_rate*100).toFixed(1)}% fo</span>
+                    </div>
+                  ))}
+                  <div style={{fontSize:9,color:"var(--text-faint)",marginTop:4}}>High fallout or low stick (n≥10)</div>
+                </div>
+              )}
+              {detailData.lowSample.length>0&&(
+                <div style={{background:"rgba(251,191,36,.05)",border:"1px solid rgba(251,191,36,.2)",borderRadius:"var(--radius)",padding:"11px 13px"}}>
+                  <div style={{fontSize:10,fontWeight:700,color:"#fbbf24",letterSpacing:".06em",marginBottom:7}}>🔬 LOW SAMPLE</div>
+                  {detailData.lowSample.map(r=>(
+                    <div key={r.rep} style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"var(--text-secondary)",marginBottom:4}}>
+                      <span>{shortName(r.rep)}</span>
+                      <span style={{color:"#fbbf24",fontFamily:"var(--font-mono)",fontSize:10}}>{r.demo} demos</span>
+                    </div>
+                  ))}
+                  <div style={{fontSize:9,color:"var(--text-faint)",marginTop:4}}>Treat these numbers with caution</div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Rep Breakdown Table */}
+          <div>
+            <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
+              <span style={{fontSize:11,fontWeight:700,color:"var(--text-primary)",letterSpacing:".08em",fontFamily:"var(--font-display)"}}>👥 REP BREAKDOWN</span>
+              <div style={{flex:1,height:1,background:"var(--border)"}}/>
+              <span style={{fontSize:10,color:"var(--text-muted)"}}>{detailData.sorted.length} reps · click row for scorecard</span>
+            </div>
+            <div style={{overflowX:"auto",borderRadius:"var(--radius)",border:"1px solid var(--border)"}}>
+              <table className="rank-table">
+                <thead>
+                  <tr>
+                    <th>Rank</th><th>Rep</th><th>Tier</th><th>Demos</th>
+                    <th style={{color:"#34d399"}}>Net Vol</th>
+                    <th style={{color:"#38bdf8"}}>STD%</th>
+                    <th style={{color:"#a78bfa"}}>OTD%</th>
+                    <th style={{color:"#fbbf24"}}>Avg Deal</th>
+                    <th style={{color:"#34d399"}}>NetStk%</th>
+                    <th style={{color:"#fb923c"}}>Fallout%</th>
+                    <th style={{color:"#94a3b8"}}>Signal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detailData.sorted.map(r=>{
+                    const tc=TC[r.tier]??"#64748b";
+                    const mktRoll=marketRollups[selectedMarket];
+                    const badges=mktRoll?getRepBadges(r,{avgDeal:mktRoll.avgDeal},companyBench):[];
+                    const confLabel=r.demo>=20?"✓ High":r.demo>=10?"~ OK":r.demo>=5?"⚠ Low":"🔬 Thin";
+                    const confColor=r.demo>=20?"#34d399":r.demo>=10?"#fbbf24":r.demo>=5?"#fb923c":"#94a3b8";
+                    return(
+                      <tr key={r.rep} className="clickable-row" onClick={()=>onOpenScorecard&&onOpenScorecard(r.rep)} style={{cursor:"pointer"}}>
+                        <td style={{color:"var(--text-muted)",fontFamily:"var(--font-mono)",fontWeight:600}}>{r.rank}</td>
+                        <td style={{fontWeight:700,color:"var(--text-primary)",whiteSpace:"nowrap"}}>
+                          {r.rep}<span className="rep-arrow" style={{marginLeft:6,fontSize:10,color:"var(--text-faint)"}}>↗</span>
+                        </td>
+                        <td><span className="tier-pill" style={{background:`${tc}18`,color:tc}}>{r.tier}</span></td>
+                        <td style={{fontFamily:"var(--font-mono)"}}>{fN(r.demo)}</td>
+                        <td style={{color:"#34d399",fontWeight:700,fontFamily:"var(--font-mono)"}}>{f$(r.net_vol)}</td>
+                        <td style={{color:r.std_pct>=detailData.coStd?"#34d399":"#f87171",fontWeight:600,fontFamily:"var(--font-mono)"}}>{fP(r.std_pct)}</td>
+                        <td style={{fontFamily:"var(--font-mono)"}}>{fP(r.otd_pct)}</td>
+                        <td style={{fontFamily:"var(--font-mono)"}}>{f$(r.avg_deal)}</td>
+                        <td style={{color:r.net_issue_rate>=0.75?"#34d399":r.net_issue_rate<0.60?"#f87171":"#fbbf24",fontFamily:"var(--font-mono)"}}>{fP(r.net_issue_rate)}</td>
+                        <td style={{color:r.fallout_rate>detailData.coFallout*1.2?"#f87171":r.fallout_rate<detailData.coFallout*0.8?"#34d399":"#fbbf24",fontFamily:"var(--font-mono)"}}>{fP(r.fallout_rate)}</td>
+                        <td>
+                          <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                            <span style={{color:confColor,fontSize:10,fontWeight:600}}>{confLabel}</span>
+                            {badges.map(b=>(
+                              <span key={b.label} style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:`${b.color}18`,color:b.color,fontWeight:700,border:`1px solid ${b.color}30`}}>{b.label}</span>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
 
 // ─── TRENDS TAB ──────────────────────────────────────────────────────────────
 function TrendsTab({r30Data,ytdData,history,onOpenScorecard}){
@@ -2619,10 +2739,10 @@ function TrackerTab({allReps,markets}){
 
 // ─── DASHBOARD TAB ───────────────────────────────────────────────────────────
 function DashboardTab({r30Data,ytdData,history,markets,marketList,onOpenScorecard}){
-  const [expandedInsight, setExpandedInsight] = useState(null);
+
   const activeReps=useMemo(()=>{
     const src=r30Data||ytdData;
-    return(src?.reps||[]).filter(r=>r.tier!=="⛔ Excluded"&&markets[r.rep]!=="⛔ Terminated");
+    return(src?.reps||[]).filter(r=>r.tier!=="⛔ Excluded"&&markets[r]!=="⛔ Terminated");
   },[r30Data,ytdData,markets]);
 
   // ── derive team averages ──
@@ -2976,49 +3096,71 @@ function DashboardTab({r30Data,ytdData,history,markets,marketList,onOpenScorecar
             })()}
           </div>
         )}
-<div style={{background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18}}>
-  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
-    <span style={{fontSize:15}}>💡</span>
-    <div>
-      <div style={{fontWeight:800,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>
-        Team Insights
-      </div>
-      <div style={{fontSize:10,color:"var(--text-muted)"}}>
-        What the data means, in plain English
-      </div>
-    </div>
-  </div>
 
-  {systemInsights.length === 0 && (
-    <div style={{color:"var(--text-muted)",fontSize:12,padding:"10px 0"}}>
-      Upload more data to generate team-level insights.
-    </div>
-  )}
-
-  {systemInsights.map((ins, i) => (
-    <div
-      key={i}
-      style={{
-        padding:"10px 12px",
-        marginBottom:8,
-        borderRadius:"var(--radius-sm)",
-        background:"var(--bg-hover)",
-        cursor:"pointer"
-      }}
-      onClick={() => setExpandedInsight(expandedInsight === i ? null : i)}
-    >
-      <div style={{fontSize:12,color:"var(--text-primary)"}}>
-        {ins.icon} {ins.text}
-      </div>
-
-      {expandedInsight === i && ins.reps?.length > 0 && (
-        <div style={{marginTop:6,fontSize:11,color:"var(--text-muted)"}}>
-          {ins.reps.map(r => r.rep).join(", ")}
-        </div>
-      )}
-    </div>
-  ))}
-</div>
+        {/* SYSTEM INSIGHTS */}
+        {(()=>{
+          const [expandedInsight,setExpandedInsight]=useState(null);
+          const insightStyles={
+            good:   {accent:"#34d399",bg:"rgba(52,211,153,.05)",  border:"rgba(52,211,153,.15)",borderExp:"rgba(52,211,153,.40)"},
+            warn:   {accent:"#fbbf24",bg:"rgba(251,191,36,.05)",  border:"rgba(251,191,36,.15)",borderExp:"rgba(251,191,36,.42)"},
+            caution:{accent:"#fb923c",bg:"rgba(251,146,60,.04)",  border:"rgba(251,146,60,.13)",borderExp:"rgba(251,146,60,.35)"},
+            info:   {accent:"#38bdf8",bg:"rgba(56,189,248,.04)",  border:"rgba(56,189,248,.14)",borderExp:"rgba(56,189,248,.38)"},
+          };
+          const getRepMetric=(ins,rep)=>{
+            if(ins.icon==="⚠️"&&ins.type==="warn")return{label:"Fallout%",value:fP(rep.fallout_rate)};
+            if(ins.icon==="📉")return{label:"NetStk%",value:fP(rep.net_issue_rate)};
+            return{label:"Score",value:(rep.score??0).toFixed(4)};
+          };
+          return(
+            <div style={{background:"var(--bg-surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+                <span style={{fontSize:15}}>💡</span>
+                <div>
+                  <div style={{fontWeight:800,fontSize:13,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>Team Insights</div>
+                  <div style={{fontSize:10,color:"var(--text-muted)"}}>What the data means, in plain English</div>
+                </div>
+              </div>
+              {systemInsights.length===0&&<div style={{color:"var(--text-muted)",fontSize:12,padding:"10px 0"}}>Upload more data to generate team-level insights.</div>}
+              {systemInsights.map((ins,i)=>{
+                const s=insightStyles[ins.type]||insightStyles.info;
+                const isExp=expandedInsight===i;
+                const reps=ins.reps||[];
+                return(
+                  <div key={i} className="fade-up"
+                    onClick={()=>setExpandedInsight(isExp?null:i)}
+                    style={{borderRadius:"var(--radius-sm)",marginBottom:7,background:s.bg,border:`1px solid ${isExp?s.borderExp:s.border}`,borderLeft:`3px solid ${isExp?s.accent:s.border}`,animationDelay:`${i*.08}s`,cursor:"pointer",transition:"border-color .15s, border-left-color .15s"}}>
+                    <div style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 13px"}}>
+                      <span style={{fontSize:15,flexShrink:0}}>{ins.icon}</span>
+                      <span style={{fontSize:12,color:"var(--text-secondary)",lineHeight:1.6,flex:1}}>{ins.text}</span>
+                      {reps.length>0&&(
+                        <span style={{flexShrink:0,fontSize:10,fontWeight:700,color:s.accent,background:`${s.accent}14`,border:`1px solid ${s.accent}30`,borderRadius:20,padding:"2px 8px",whiteSpace:"nowrap",marginTop:1,transition:"background .15s"}}>
+                          <span style={{fontSize:9,marginRight:3}}>{isExp?"▾":"▸"}</span>{reps.length} rep{reps.length>1?"s":""}
+                        </span>
+                      )}
+                    </div>
+                    {isExp&&reps.length>0&&(
+                      <div style={{borderTop:`1px solid ${s.accent}22`,padding:"6px 13px 10px"}}>
+                        {reps.map((rep,ri)=>{
+                          const metric=getRepMetric(ins,rep);
+                          return(
+                            <div key={rep.rep} className="fade-up"
+                              onClick={e=>{e.stopPropagation();onOpenScorecard(rep.rep);}}
+                              style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 8px",borderRadius:"var(--radius-sm)",cursor:"pointer",transition:"background .12s",animationDelay:`${ri*.04}s`}}
+                              onMouseEnter={e=>e.currentTarget.style.background="var(--bg-hover)"}
+                              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                              <span style={{fontSize:12,color:"var(--text-primary)",fontWeight:500}}>{rep.rep}</span>
+                              <span style={{fontSize:11,fontFamily:"var(--font-mono)"}}><span style={{fontSize:9,color:"var(--text-faint)",marginRight:4}}>{metric.label}</span><span style={{color:s.accent,fontWeight:600}}>{metric.value}</span></span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
