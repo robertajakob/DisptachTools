@@ -2491,6 +2491,7 @@ function TrackerTab({allReps,markets}){
 
 // ─── DASHBOARD TAB ───────────────────────────────────────────────────────────
 function DashboardTab({r30Data,ytdData,history,markets,marketList,onOpenScorecard}){
+  const [expandedInsight,setExpandedInsight]=useState(null);
 
   const activeReps=useMemo(()=>{
     const src=r30Data||ytdData;
@@ -2851,7 +2852,6 @@ function DashboardTab({r30Data,ytdData,history,markets,marketList,onOpenScorecar
 
         {/* SYSTEM INSIGHTS */}
         {(()=>{
-          const [expandedInsight,setExpandedInsight]=useState(null);
           const insightStyles={
             good:   {accent:"#34d399",bg:"rgba(52,211,153,.05)",  border:"rgba(52,211,153,.15)",borderExp:"rgba(52,211,153,.40)"},
             warn:   {accent:"#fbbf24",bg:"rgba(251,191,36,.05)",  border:"rgba(251,191,36,.15)",borderExp:"rgba(251,191,36,.42)"},
