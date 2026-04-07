@@ -374,27 +374,90 @@ function letterGrade(val,benchmark,higherBetter=true){
   return{grade:"F",color:"#f87171"};
 }
 
-// ─── INSIGHT ENGINE (unchanged logic) ────────────────────────────────────────
+// ─── INSIGHT ENGINE (v2 — diagnostic, driver-attributed) ─────────────────────
 function generateInsights(r,bench,r30R,ytdR){
   const insights=[];
   const stdPct=r.std_pct*100,otdPct=r.otd_pct*100;
   const falloutPct=r.fallout_rate*100,nirPct=r.net_issue_rate*100;
   const gap=gapPts(r),lowSample=r.demo<10;
-  if(lowSample){insights.push({type:"caution",icon:"🔬",text:`Low sample size (${r.demo} demos) — treat these numbers with caution. Performance may look better or worse than reality.`});}
-  if(stdPct>=35&&falloutPct>(bench.fallout*100)*1.2){insights.push({type:"warn",icon:"⚠️",text:`Strong close rate (${stdPct.toFixed(1)}%) but higher-than-average fallout (${falloutPct.toFixed(1)}%) — closing deals that aren't sticking.`});}
-  else if(stdPct>=35){insights.push({type:"good",icon:"💪",text:`Strong close rate at ${stdPct.toFixed(1)}% — well above the 35% threshold. Converts demos into revenue consistently.`});}
-  else if(stdPct<25){insights.push({type:"bad",icon:"📉",text:`Close rate of ${stdPct.toFixed(1)}% is below the 25% floor. Demo-to-close conversion needs attention.`});}
-  if(gap!==null&&gap>=12){insights.push({type:"warn",icon:"🚨",text:`OTD% is ${gap}pp higher than STD% — rep closes on the day but struggles in the full cycle. May be relying on pressure over process.`});}
-  if(nirPct>=80){insights.push({type:"good",icon:"✅",text:`Excellent stick rate — ${nirPct.toFixed(1)}% of closes net issue. Deals are real and durable.`});}
-  else if(nirPct<55&&r.otd_cnt>=5){insights.push({type:"bad",icon:"🔴",text:`Only ${nirPct.toFixed(1)}% of closes net issue. A large portion of "wins" aren't converting to revenue.`});}
-  if(r.net_vol>bench.net_vol*1.25){insights.push({type:"good",icon:"🏆",text:`Top revenue producer — net volume of ${f$(r.net_vol)} is ${Math.round((r.net_vol/bench.net_vol-1)*100)}% above team average.`});}
+
+  // ── SAMPLE SIZE ──
+  if(lowSample){
+    insights.push({type:"caution",icon:"🔬",text:`Only ${r.demo} demos — numbers aren't reliable yet. Avoid high-stakes decisions until sample grows.`});
+  }
+
+  // ── CLOSE RATE + FALLOUT (combined diagnostic) ──
+  if(stdPct>=35&&falloutPct>(bench.fallout*100)*1.2){
+    // Identify dominant fallout driver
+    const totalFallout=r.cancel_cnt+r.hold_cnt+r.crdecline_cnt||1;
+    const domDriver=r.cancel_cnt>=r.hold_cnt&&r.cancel_cnt>=r.crdecline_cnt
+      ?`cancels (${r.cancel_cnt})`
+      :r.hold_cnt>=r.crdecline_cnt
+        ?`holds (${r.hold_cnt})`
+        :`credit declines (${r.crdecline_cnt})`;
+    const lostVol=r.cancel_vol+r.hold_vol+r.crdecline_vol;
+    insights.push({type:"warn",icon:"⚠️",text:`Closes at ${stdPct.toFixed(1)}% but ${falloutPct.toFixed(1)}% fallout is bleeding ${f$(lostVol)} — primary driver: ${domDriver}. Coach post-sale process.`});
+  } else if(stdPct>=35){
+    insights.push({type:"good",icon:"💪",text:`${stdPct.toFixed(1)}% close rate (team avg: ${(bench.std*100).toFixed(1)}%) — reliable converter. Safe send for high-value leads.`});
+  } else if(stdPct>=25&&stdPct<35){
+    insights.push({type:"caution",icon:"👀",text:`Close rate of ${stdPct.toFixed(1)}% is mid-range — not a liability, but ${Math.round((0.35-r.std_pct)*r.demo)} more closes needed to hit elite threshold.`});
+  } else if(stdPct<25){
+    insights.push({type:"bad",icon:"📉",text:`${stdPct.toFixed(1)}% close rate is below the 25% floor — costing the team an estimated ${f$((0.25-r.std_pct)*r.demo*r.avg_deal)} in unrealized revenue.`});
+  }
+
+  // ── OTD vs STD GAP (pressure flag) ──
+  if(gap!==null&&gap>=12){
+    insights.push({type:"warn",icon:"🚨",text:`OTD is ${gap}pp above STD — rep converts on demo day but loses deals in the full cycle. Likely pressure closing, not process. Reassign with caution.`});
+  }
+
+  // ── STICK RATE + FALLOUT DRIVER DETAIL ──
+  if(nirPct>=80&&r.otd_cnt>=5){
+    insights.push({type:"good",icon:"✅",text:`${nirPct.toFixed(1)}% stick rate — ${f$(r.net_vol)} of closed revenue is holding. Deals are real. Prioritize for high-ticket appointments.`});
+  } else if(nirPct<55&&r.otd_cnt>=5){
+    const cancelShare=r.otd_cnt>0?Math.round((r.cancel_cnt/r.otd_cnt)*100):0;
+    const holdShare=r.otd_cnt>0?Math.round((r.hold_cnt/r.otd_cnt)*100):0;
+    const crShare=r.otd_cnt>0?Math.round((r.crdecline_cnt/r.otd_cnt)*100):0;
+    const lostVol=r.cancel_vol+r.hold_vol+r.crdecline_vol;
+    const topDriver=cancelShare>=holdShare&&cancelShare>=crShare
+      ?`${cancelShare}% cancel rate`
+      :holdShare>=crShare
+        ?`${holdShare}% hold rate`
+        :`${crShare}% credit decline rate`;
+    insights.push({type:"bad",icon:"🔴",text:`Only ${nirPct.toFixed(1)}% of closes net issue — ${f$(lostVol)} lost post-sale. Primary leak: ${topDriver}. ${crShare>cancelShare&&crShare>holdShare?"Market-level credit issue, not just this rep.":"Rep needs post-sale coaching."}`});
+  }
+
+  // ── NET VOLUME (revenue contribution) ──
+  if(r.net_vol>bench.net_vol*1.25){
+    insights.push({type:"good",icon:"🏆",text:`${f$(r.net_vol)} net volume — ${Math.round((r.net_vol/bench.net_vol-1)*100)}% above team avg. Top revenue contributor. Protect their calendar.`});
+  } else if(r.net_vol<bench.net_vol*0.6&&r.demo>=10){
+    insights.push({type:"bad",icon:"💸",text:`${f$(r.net_vol)} net volume is ${Math.round((1-r.net_vol/bench.net_vol)*100)}% below team avg despite ${r.demo} demos. Volume isn't the issue — conversion or fallout is.`});
+  }
+
+  // ── AVG DEAL SIZE ──
+  if(r.avg_deal>bench.avg_deal*1.15&&r.otd_cnt>=5){
+    insights.push({type:"good",icon:"💰",text:`Avg deal ${f$(r.avg_deal)} vs team avg ${f$(bench.avg_deal)} — extracts more value per appointment. Ideal for premium market slots.`});
+  } else if(r.avg_deal<bench.avg_deal*0.80&&r.otd_cnt>=5){
+    insights.push({type:"caution",icon:"📎",text:`Avg deal ${f$(r.avg_deal)} is below team avg (${f$(bench.avg_deal)}) — closing frequently but underselling. Coach on package upsell.`});
+  }
+
+  // ── TREND (30-day vs YTD) ──
   if(r30R&&ytdR){
     const stdDelta=r30R.std_pct-ytdR.std_pct,volDelta=r30R.net_vol-ytdR.net_vol;
-    if(stdDelta>=.05&&volDelta>0){insights.push({type:"trend",icon:"🔥",text:`Improving trajectory — close rate (+${(stdDelta*100).toFixed(1)}pp) and volume (${f$(volDelta)}) both up vs YTD baseline.`});}
-    else if(stdDelta<=-.05&&volDelta<0){insights.push({type:"warn",icon:"❄️",text:`Declining trend — close rate down ${(Math.abs(stdDelta)*100).toFixed(1)}pp and volume down ${f$(Math.abs(volDelta))} vs YTD.`});}
+    if(stdDelta>=.05&&volDelta>0){
+      insights.push({type:"trend",icon:"🔥",text:`Last 30 days: close rate +${(stdDelta*100).toFixed(1)}pp and volume +${f$(volDelta)} vs YTD. Momentum is real — increase lead flow now.`});
+    } else if(stdDelta<=-.05&&volDelta<0){
+      insights.push({type:"warn",icon:"❄️",text:`Last 30 days: close rate −${(Math.abs(stdDelta)*100).toFixed(1)}pp and volume −${f$(Math.abs(volDelta))} vs YTD. Downward trend — schedule a check-in before next lead assignment.`});
+    } else if(stdDelta>=.05&&volDelta<=0){
+      insights.push({type:"trend",icon:"📈",text:`Close rate up ${(stdDelta*100).toFixed(1)}pp recently but volume hasn't followed — likely a demo volume issue, not conversion.`});
+    }
   }
-  if(falloutPct<(bench.fallout*100)*0.7&&r.otd_cnt>=5){insights.push({type:"good",icon:"🎯",text:`Deal quality is excellent — fallout rate of ${falloutPct.toFixed(1)}% is well below team average. Closes are clean and durable.`});}
-  return insights.slice(0,3);
+
+  // ── DEAL QUALITY (clean fallout) ──
+  if(falloutPct<(bench.fallout*100)*0.7&&r.otd_cnt>=5&&nirPct>=70){
+    insights.push({type:"good",icon:"🎯",text:`${falloutPct.toFixed(1)}% fallout vs ${(bench.fallout*100).toFixed(1)}% team avg — deals close clean and stick. Low-risk, high-trust rep.`});
+  }
+
+  return insights.slice(0,4);
 }
 
 // ─── LEAD RECOMMENDATION ENGINE (unchanged) ──────────────────────────────────
@@ -1449,358 +1512,6 @@ function ComparisonTool({r30Data,ytdData,markets,marketList}){
   );
 }
 
-// ─── MARKET SNAPSHOT TAB ─────────────────────────────────────────────────────
-function MarketSnapshotTab({r30Data,ytdData,markets,marketList,onOpenScorecard}){
-  const [snapWin,setSnapWin]=useState("r30");
-  const [selectedMarket,setSelectedMarket]=useState(null);
-  const src=snapWin==="r30"?r30Data:ytdData;
-  const otherSrcForDrill=snapWin==="r30"?ytdData:r30Data;
-
-  const marketCards=useMemo(()=>{
-    if(!src?.reps||!marketList.length)return[];
-    return marketList.map(mkt=>{
-      const reps=src.reps.filter(r=>markets[r.rep]===mkt&&r.tier!=="⛔ Excluded");
-      if(!reps.length)return null;
-      const sum=f=>reps.reduce((a,r)=>a+(r[f]??0),0);
-      const avg=f=>sum(f)/reps.length;
-      const netVol=sum("net_vol");
-      const stdPct=avg("std_pct");
-      const otdPct=avg("otd_pct");
-      const avgDeal=avg("avg_deal");
-      const topRep=reps.slice().sort((a,b)=>b.net_vol-a.net_vol)[0];
-      const eliteCount=reps.filter(r=>r.tier==="🥇 Elite"||r.tier==="🥈 Strong").length;
-      const atRiskCount=reps.filter(r=>r.tier==="⚠ Below Avg"||r.tier==="🔴 Low").length;
-      let volTrend=null;
-      if(otherSrcForDrill?.reps){
-        const otherReps=otherSrcForDrill.reps.filter(r=>markets[r.rep]===mkt&&r.tier!=="⛔ Excluded");
-        if(otherReps.length){
-          const otherVol=otherReps.reduce((a,r)=>a+(r.net_vol??0),0);
-          volTrend=otherVol>0?((netVol-otherVol)/otherVol):null;
-        }
-      }
-      return{name:mkt,repCount:reps.length,netVol,stdPct,otdPct,avgDeal,topRep,eliteCount,atRiskCount,volTrend};
-    }).filter(Boolean).sort((a,b)=>b.netVol-a.netVol);
-  },[src,markets,marketList,otherSrcForDrill]);
-
-  const company=useMemo(()=>{
-    if(!r30Data?.reps&&!ytdData?.reps)return null;
-    const calc=arr=>arr.length?{
-      netVol:arr.reduce((a,r)=>a+(r.net_vol??0),0),
-      stdPct:arr.reduce((a,r)=>a+(r.std_pct??0),0)/arr.length,
-      otdPct:arr.reduce((a,r)=>a+(r.otd_pct??0),0)/arr.length,
-      avgDeal:arr.reduce((a,r)=>a+(r.avg_deal??0),0)/arr.length,
-      repCount:arr.length,
-    }:null;
-    const r30Active=(r30Data?.reps||[]).filter(r=>r.tier!=="⛔ Excluded");
-    const ytdActive=(ytdData?.reps||[]).filter(r=>r.tier!=="⛔ Excluded");
-    return{r30:calc(r30Active),ytd:calc(ytdActive)};
-  },[r30Data,ytdData]);
-
-  const detailData=useMemo(()=>{
-    if(!selectedMarket||!src?.reps)return null;
-    const reps=src.reps.filter(r=>markets[r.rep]===selectedMarket&&r.tier!=="⛔ Excluded");
-    if(!reps.length)return null;
-
-    const sorted=[...reps].sort((a,b)=>{
-      const ar=typeof a.rank==="number"?a.rank:Number.POSITIVE_INFINITY;
-      const br=typeof b.rank==="number"?b.rank:Number.POSITIVE_INFINITY;
-      if(ar!==br)return ar-br;
-      return (b.net_vol??0)-(a.net_vol??0);
-    });
-
-    const sum=f=>reps.reduce((a,r)=>a+(r[f]??0),0);
-    const avg=f=>sum(f)/reps.length;
-    const mktNetVol=sum("net_vol");
-    const mktStdPct=avg("std_pct");
-    const mktOtdPct=avg("otd_pct");
-    const mktAvgDeal=avg("avg_deal");
-    const mktFallout=avg("fallout_rate");
-    const mktNir=avg("net_issue_rate");
-    const mktRank=marketCards.findIndex(m=>m.name===selectedMarket)+1;
-    const topRep=sorted.slice().sort((a,b)=>(b.net_vol??0)-(a.net_vol??0))[0]||null;
-
-    const allActive=(src.reps||[]).filter(r=>r.tier!=="⛔ Excluded");
-    const coAvg=f=>allActive.length?allActive.reduce((a,r)=>a+(r[f]??0),0)/allActive.length:0;
-    const coStd=coAvg("std_pct");
-    const coFallout=coAvg("fallout_rate");
-    const coNir=coAvg("net_issue_rate");
-    const coAvgDeal=coAvg("avg_deal");
-    const coTotalNetVol=allActive.reduce((a,r)=>a+(r.net_vol??0),0);
-
-    let deltas=null;
-    if(otherSrcForDrill?.reps){
-      const otherReps=otherSrcForDrill.reps.filter(r=>markets[r.rep]===selectedMarket&&r.tier!=="⛔ Excluded");
-      if(otherReps.length){
-        const oSum=f=>otherReps.reduce((a,r)=>a+(r[f]??0),0);
-        const oAvg=f=>oSum(f)/otherReps.length;
-        const oNetVol=oSum("net_vol");
-        deltas={
-          vol:oNetVol>0?(mktNetVol-oNetVol)/oNetVol:null,
-          std:mktStdPct-oAvg("std_pct"),
-          otd:mktOtdPct-oAvg("otd_pct"),
-          deal:mktAvgDeal-oAvg("avg_deal"),
-        };
-      }
-    }
-
-    const insights=[];
-    const topTwo=sorted.slice().sort((a,b)=>(b.net_vol??0)-(a.net_vol??0)).slice(0,2);
-    const topTwoVol=topTwo.reduce((a,r)=>a+(r.net_vol??0),0);
-    if(reps.length>=3&&mktNetVol>0&&topTwoVol/mktNetVol>=0.7){
-      insights.push({icon:"⚡",type:"warn",text:`${topTwo.length} reps are driving ${Math.round(topTwoVol/mktNetVol*100)}% of market volume.`});
-    }
-    if(coFallout>0&&mktFallout>coFallout*1.25){
-      insights.push({icon:"⚠️",type:"warn",text:`High fallout vs company average (${fP(mktFallout)} vs ${fP(coFallout)}).`});
-    }else if(coFallout>0&&mktFallout<coFallout*0.8){
-      insights.push({icon:"✅",type:"good",text:`Deal quality is strong with fallout below company average.`});
-    }
-    if(mktStdPct>=0.35&&mktNir<0.65){
-      insights.push({icon:"🔄",type:"warn",text:`Strong close rate but weak stick rate.`});
-    }else if(mktStdPct>=0.35&&mktNir>=0.75){
-      insights.push({icon:"💪",type:"good",text:`Strong close rate and strong stick rate.`});
-    }
-    const aboveAvgStd=reps.filter(r=>(r.std_pct??0)>coStd).length;
-    if(aboveAvgStd===1&&reps.length>=3){
-      insights.push({icon:"📊",type:"caution",text:`Only 1 rep is above company average STD%.`});
-    }
-    // renamed from lowSample to lowSampleReps to avoid duplicate const in this scope
-    const lowSampleReps=reps.filter(r=>(r.demo??0)<8);
-    if(lowSampleReps.length>=Math.max(1,Math.ceil(reps.length/2))){
-      insights.push({icon:"🔬",type:"caution",text:`Low sample size market — ${lowSampleReps.length} rep${lowSampleReps.length!==1?"s":""} under 8 demos.`});
-    }
-    if(coTotalNetVol>0&&mktNetVol/coTotalNetVol>=0.2){
-      insights.push({icon:"🏆",type:"good",text:`Top-contributing market by net volume.`});
-    }
-
-    const carrying=[...sorted].sort((a,b)=>(b.net_vol??0)-(a.net_vol??0)).slice(0,2);
-    const moreLeads=reps.filter(r=>(r.std_pct??0)>=0.32&&(r.net_issue_rate??0)>=0.70).sort((a,b)=>(b.net_vol??0)-(a.net_vol??0)).slice(0,2);
-    const caution=reps.filter(r=>coFallout>0?(r.fallout_rate??0)>coFallout*1.3:(r.fallout_rate??0)>=0.2);
-    const lowSample=lowSampleReps;
-
-    return{sorted,mktNetVol,mktStdPct,mktOtdPct,mktAvgDeal,mktFallout,mktNir,mktRank,topRep,deltas,insights:insights.slice(0,5),carrying,moreLeads,caution,lowSample};
-  },[selectedMarket,src,markets,marketCards,otherSrcForDrill]);
-
-  const noData=!r30Data&&!ytdData;
-  if(noData)return(
-    <div className="empty-state" style={{padding:"60px 0"}}>
-      <div className="empty-icon">🏙</div>
-      <div className="empty-title">No data yet</div>
-      <div className="empty-sub">Upload a CSV to see market standings</div>
-    </div>
-  );
-
-  const trendColor=v=>v==null?"#64748b":v>=.1?"#34d399":v>=0?"#86efac":v>-.1?"#fb923c":"#f87171";
-  const trendIcon=v=>v==null?"➡":v>=.1?"🔥":v>=0?"↑":v>-.1?"↓":"❄";
-  const trendLabel=v=>v==null?"—":((v>=0?"+":"")+((v*100).toFixed(1))+"%");
-  const deltaPP=v=>v==null?"—":`${v>=0?"+":""}${(v*100).toFixed(1)}pp`;
-  const insightStyles={
-    good:{bg:"rgba(52,211,153,.06)",border:"rgba(52,211,153,.2)"},
-    warn:{bg:"rgba(248,113,113,.06)",border:"rgba(248,113,113,.2)"},
-    caution:{bg:"rgba(251,191,36,.06)",border:"rgba(251,191,36,.2)"},
-  };
-
-  return(
-    <div style={{padding:"20px 24px",animation:"fadeUp .2s ease both"}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
-        <div>
-          <div style={{fontWeight:800,fontSize:18,color:"var(--text-primary)",fontFamily:"var(--font-display)",letterSpacing:"-.01em"}}>Market Snapshot</div>
-          <div style={{fontSize:11,color:"var(--text-muted)",marginTop:3}}>Current standing by market · CEO-level view</div>
-        </div>
-        <div style={{display:"flex",gap:6,background:"var(--bg-elevated)",border:"1px solid var(--border)",borderRadius:"var(--radius)",padding:4}}>
-          {[["r30","Rolling 30"],["ytd","Year to Date"]].map(([v,l])=>(
-            <button key={v} onClick={()=>setSnapWin(v)} style={{padding:"6px 14px",borderRadius:"var(--radius-sm)",border:"none",fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer",transition:"all .15s",background:snapWin===v?"#38bdf8":"transparent",color:snapWin===v?"#000":"var(--text-muted)"}}>
-              {l}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {company&&(
-        <div style={{background:"var(--bg-surface)",border:"1px solid var(--border-strong)",borderRadius:"var(--radius-lg)",padding:"16px 22px",marginBottom:22,display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr 1fr",gap:"0 28px",alignItems:"center"}}>
-          <div style={{paddingRight:24,borderRight:"1px solid var(--border)"}}>
-            <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".08em",textTransform:"uppercase",fontWeight:700,marginBottom:4}}>Company</div>
-            <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              {r30Data&&<span style={{fontSize:9,padding:"2px 7px",borderRadius:3,background:"rgba(56,189,248,.12)",color:"#38bdf8",fontWeight:700,border:"1px solid rgba(56,189,248,.2)"}}>R30</span>}
-              {ytdData&&<span style={{fontSize:9,padding:"2px 7px",borderRadius:3,background:"rgba(52,211,153,.10)",color:"#34d399",fontWeight:700,border:"1px solid rgba(52,211,153,.2)"}}>YTD</span>}
-            </div>
-          </div>
-          {[
-            ["Net Volume","netVol",v=>f$(Math.round(v)),"#34d399"],
-            ["STD%","stdPct",v=>fP(v),"#38bdf8"],
-            ["OTD%","otdPct",v=>fP(v),"#a78bfa"],
-            ["Avg Deal","avgDeal",v=>f$(Math.round(v)),"#fbbf24"],
-          ].map(([label,key,fmt,color])=>{
-            const r30v=company.r30?.[key];
-            const ytdv=company.ytd?.[key];
-            return(
-              <div key={key}>
-                <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".06em",textTransform:"uppercase",fontWeight:700,marginBottom:6}}>{label}</div>
-                <div style={{display:"flex",gap:14,alignItems:"baseline"}}>
-                  {r30Data&&<div><div style={{fontSize:9,color:"#38bdf8",marginBottom:1}}>R30</div><div style={{fontSize:15,fontWeight:800,color,fontFamily:"var(--font-mono)"}}>{fmt(r30v??0)}</div></div>}
-                  {ytdData&&<div><div style={{fontSize:9,color:"#34d399",marginBottom:1}}>YTD</div><div style={{fontSize:15,fontWeight:800,color:"var(--text-secondary)",fontFamily:"var(--font-mono)"}}>{fmt(ytdv??0)}</div></div>}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {marketCards.length===0?(
-        <div style={{textAlign:"center",padding:"40px 0",color:"var(--text-muted)",fontSize:13}}>
-          No markets configured — assign reps to markets in the Dispatch tab first.
-        </div>
-      ):(
-        <>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:14,marginBottom:selectedMarket&&detailData?18:0}}>
-            {marketCards.map((mkt,idx)=>{
-              const isSelected=selectedMarket===mkt.name;
-              return(
-                <div key={mkt.name} className="metric-card fade-up" onClick={()=>setSelectedMarket(isSelected?null:mkt.name)} style={{animationDelay:`${idx*.05}s`,background:isSelected?"rgba(56,189,248,.06)":"var(--bg-surface)",border:isSelected?"1px solid #38bdf8":"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:18,position:"relative",overflow:"hidden",cursor:"pointer",boxShadow:isSelected?"0 0 0 1px rgba(56,189,248,.15)":"none"}}>
-                  <div style={{position:"absolute",top:14,right:14,width:26,height:26,borderRadius:"50%",background:"rgba(56,189,248,.08)",border:"1px solid rgba(56,189,248,.18)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#38bdf8",fontFamily:"var(--font-mono)"}}>{idx+1}</div>
-                  <div style={{marginBottom:14}}>
-                    <div style={{fontWeight:800,fontSize:15,color:"var(--text-primary)",fontFamily:"var(--font-display)",marginBottom:3}}>{mkt.name}</div>
-                    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                      <span style={{fontSize:10,color:"var(--text-muted)"}}>{mkt.repCount} active rep{mkt.repCount!==1?"s":""}</span>
-                      {mkt.eliteCount>0&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:3,background:"rgba(245,158,11,.12)",color:"#f59e0b",fontWeight:700,border:"1px solid rgba(245,158,11,.2)"}}>🥇 {mkt.eliteCount} top tier</span>}
-                      {mkt.atRiskCount>0&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:3,background:"rgba(248,113,113,.10)",color:"#f87171",fontWeight:700,border:"1px solid rgba(248,113,113,.2)"}}>⚠ {mkt.atRiskCount} at risk</span>}
-                    </div>
-                  </div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
-                    {[
-                      {label:"Net Volume",val:f$(Math.round(mkt.netVol)),color:"#34d399"},
-                      {label:"STD%",val:fP(mkt.stdPct),color:"#38bdf8"},
-                      {label:"OTD%",val:fP(mkt.otdPct),color:"#a78bfa"},
-                      {label:"Avg Deal",val:f$(Math.round(mkt.avgDeal)),color:"#fbbf24"},
-                    ].map(({label,val,color})=>(
-                      <div key={label} style={{background:"var(--bg-elevated)",borderRadius:"var(--radius-sm)",padding:"10px 12px",border:"1px solid var(--border)"}}>
-                        <div style={{fontSize:9,color:"var(--text-muted)",letterSpacing:".06em",textTransform:"uppercase",fontWeight:700,marginBottom:4}}>{label}</div>
-                        <div style={{fontSize:15,fontWeight:800,color,fontFamily:"var(--font-mono)"}}>{val}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",borderTop:"1px solid var(--border)",paddingTop:12}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      <span style={{fontSize:11}}>{trendIcon(mkt.volTrend)}</span>
-                      <div>
-                        <div style={{fontSize:9,color:"var(--text-muted)",letterSpacing:".04em"}}>Vol vs {snapWin==="r30"?"YTD":"R30"}</div>
-                        <div style={{fontSize:12,fontWeight:700,color:trendColor(mkt.volTrend),fontFamily:"var(--font-mono)"}}>{trendLabel(mkt.volTrend)}</div>
-                      </div>
-                    </div>
-                    {mkt.topRep&&(
-                      <div style={{textAlign:"right"}}>
-                        <div style={{fontSize:9,color:"var(--text-muted)",marginBottom:2}}>Top Producer</div>
-                        <div style={{fontSize:11,fontWeight:700,color:"var(--text-primary)",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{mkt.topRep.rep}</div>
-                        <div style={{fontSize:9,color:"#34d399",fontFamily:"var(--font-mono)"}}>{f$(mkt.topRep.net_vol)}</div>
-                      </div>
-                    )}
-                  </div>
-                  <div style={{marginTop:10,textAlign:"center",fontSize:9,letterSpacing:".05em",color:isSelected?"#38bdf8":"var(--text-faint)",fontWeight:isSelected?700:500}}>{isSelected?"▼ EXPANDED BELOW":"CLICK TO DRILL DOWN"}</div>
-                </div>
-              );
-            })}
-          </div>
-
-          {selectedMarket&&detailData&&(
-            <div className="slide-in" style={{background:"var(--bg-surface)",border:"1px solid #38bdf8",borderRadius:"var(--radius-lg)",padding:"22px 24px",marginBottom:20}}>
-              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:20,gap:16,flexWrap:"wrap"}}>
-                <div>
-                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4,flexWrap:"wrap"}}>
-                    <div style={{fontWeight:900,fontSize:20,color:"var(--text-primary)",fontFamily:"var(--font-display)"}}>{selectedMarket}</div>
-                    <span style={{fontSize:11,color:"#38bdf8",background:"rgba(56,189,248,.10)",padding:"2px 9px",borderRadius:12,fontWeight:700,border:"1px solid rgba(56,189,248,.2)"}}>Rank #{detailData.mktRank}</span>
-                    <span style={{fontSize:11,color:"var(--text-muted)"}}>{detailData.sorted.length} rep{detailData.sorted.length!==1?"s":""}</span>
-                  </div>
-                  {detailData.topRep&&<div style={{fontSize:11,color:"var(--text-muted)"}}>Top producer: <span style={{color:"#fbbf24",fontWeight:700}}>{detailData.topRep.rep}</span> · <span style={{color:"#34d399",fontFamily:"var(--font-mono)"}}>{f$(detailData.topRep.net_vol)}</span></div>}
-                </div>
-                <button className="btn-ghost" onClick={()=>setSelectedMarket(null)}>Collapse</button>
-              </div>
-
-              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:14}}>
-                <div className="stat-chip"><div className="chip-label">Net Volume</div><div className="chip-value" style={{color:"#34d399"}}>{f$(detailData.mktNetVol)}</div></div>
-                <div className="stat-chip"><div className="chip-label">STD%</div><div className="chip-value" style={{color:"#38bdf8"}}>{fP(detailData.mktStdPct)}</div></div>
-                <div className="stat-chip"><div className="chip-label">OTD%</div><div className="chip-value" style={{color:"#a78bfa"}}>{fP(detailData.mktOtdPct)}</div></div>
-                <div className="stat-chip"><div className="chip-label">Avg Deal</div><div className="chip-value" style={{color:"#fbbf24"}}>{f$(detailData.mktAvgDeal)}</div></div>
-              </div>
-
-              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:18}}>
-                <div className="stat-chip"><div className="chip-label">Net Vol Δ</div><div className="chip-value" style={{color:trendColor(detailData.deltas?.vol)}}>{trendLabel(detailData.deltas?.vol)}</div></div>
-                <div className="stat-chip"><div className="chip-label">STD Δ</div><div className="chip-value" style={{color:detailData.deltas?.std>=0?"#34d399":"#f87171"}}>{deltaPP(detailData.deltas?.std)}</div></div>
-                <div className="stat-chip"><div className="chip-label">OTD Δ</div><div className="chip-value" style={{color:detailData.deltas?.otd>=0?"#34d399":"#f87171"}}>{deltaPP(detailData.deltas?.otd)}</div></div>
-                <div className="stat-chip"><div className="chip-label">Avg Deal Δ</div><div className="chip-value" style={{color:(detailData.deltas?.deal??0)>=0?"#34d399":"#f87171"}}>{detailData.deltas?.deal==null?"—":`${detailData.deltas.deal>=0?"+":""}${f$(detailData.deltas.deal)}`}</div></div>
-              </div>
-
-              {detailData.insights.length>0&&(
-                <div style={{marginBottom:18}}>
-                  <SectionHeader icon="💡" title="Market Insights" compact color="#38bdf8"/>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                    {detailData.insights.map((ins,i)=>{
-                      const s=insightStyles[ins.type]||insightStyles.caution;
-                      return(
-                        <div key={i} className="insight-item" style={{background:s.bg,border:`1px solid ${s.border}`}}>
-                          <span style={{fontSize:16,flexShrink:0}}>{ins.icon}</span>
-                          <span style={{fontSize:12,color:"#cbd5e1",lineHeight:1.55}}>{ins.text}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:18}}>
-                <div className="section-block" style={{margin:0,padding:"12px 14px"}}>
-                  <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".06em",textTransform:"uppercase",fontWeight:700,marginBottom:8}}>Carrying</div>
-                  {detailData.carrying.length?detailData.carrying.map(r=><div key={r.rep} style={{fontSize:12,color:"var(--text-primary)",marginBottom:4}}>{r.rep} <span style={{color:"#34d399",fontFamily:"var(--font-mono)"}}>· {f$(r.net_vol)}</span></div>):<div style={{fontSize:12,color:"var(--text-muted)"}}>—</div>}
-                </div>
-                <div className="section-block" style={{margin:0,padding:"12px 14px"}}>
-                  <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".06em",textTransform:"uppercase",fontWeight:700,marginBottom:8}}>More Lead Share</div>
-                  {detailData.moreLeads.length?detailData.moreLeads.map(r=><div key={r.rep} style={{fontSize:12,color:"var(--text-primary)",marginBottom:4}}>{r.rep}</div>):<div style={{fontSize:12,color:"var(--text-muted)"}}>None clear yet</div>}
-                </div>
-                <div className="section-block" style={{margin:0,padding:"12px 14px"}}>
-                  <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".06em",textTransform:"uppercase",fontWeight:700,marginBottom:8}}>Use Caution</div>
-                  {detailData.caution.length?detailData.caution.map(r=><div key={r.rep} style={{fontSize:12,color:"var(--text-primary)",marginBottom:4}}>{r.rep}</div>):<div style={{fontSize:12,color:"var(--text-muted)"}}>None flagged</div>}
-                </div>
-                <div className="section-block" style={{margin:0,padding:"12px 14px"}}>
-                  <div style={{fontSize:10,color:"var(--text-muted)",letterSpacing:".06em",textTransform:"uppercase",fontWeight:700,marginBottom:8}}>Low Sample</div>
-                  {detailData.lowSample.length?detailData.lowSample.map(r=><div key={r.rep} style={{fontSize:12,color:"var(--text-primary)",marginBottom:4}}>{r.rep}</div>):<div style={{fontSize:12,color:"var(--text-muted)"}}>None flagged</div>}
-                </div>
-              </div>
-
-              <div style={{overflowX:"auto",borderRadius:"var(--radius-lg)",border:"1px solid var(--border)"}}>
-                <table className="rank-table">
-                  <thead>
-                    <tr>
-                      {["Rep","Rank","Tier","Demo","Net Vol","STD%","OTD%","Fallout%","NetStk%","Avg Deal","Conf"].map(h=><th key={h} style={{cursor:"default"}}>{h}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detailData.sorted.map(r=>{
-                      const conf=CONF(r.demo);
-                      return(
-                        <tr key={r.rep} onClick={()=>onOpenScorecard&&onOpenScorecard(r.rep)} className="clickable-row" style={{cursor:onOpenScorecard?"pointer":"default"}}>
-                          <td style={{fontWeight:600,color:"var(--text-primary)"}}>{r.rep}</td>
-                          <td style={{fontFamily:"var(--font-mono)"}}>{r.rank}</td>
-                          <td><span className="tier-pill" style={{background:`${TC[r.tier]??"#64748b"}18`,color:TC[r.tier]??"#64748b"}}>{r.tier}</span></td>
-                          <td style={{fontFamily:"var(--font-mono)"}}>{fN(r.demo)}</td>
-                          <td style={{fontFamily:"var(--font-mono)",color:"#34d399"}}>{f$(r.net_vol)}</td>
-                          <td style={{fontFamily:"var(--font-mono)"}}>{fP(r.std_pct)}</td>
-                          <td style={{fontFamily:"var(--font-mono)"}}>{fP(r.otd_pct)}</td>
-                          <td style={{fontFamily:"var(--font-mono)"}}>{fP(r.fallout_rate)}</td>
-                          <td style={{fontFamily:"var(--font-mono)"}}>{fP(r.net_issue_rate)}</td>
-                          <td style={{fontFamily:"var(--font-mono)"}}>{f$(r.avg_deal)}</td>
-                          <td style={{fontFamily:"var(--font-mono)"}}>{(conf*100).toFixed(0)}%</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
 // ─── MARKET MANAGER ──────────────────────────────────────────────────────────
 function MarketManager({r30Data,ytdData,markets,marketList,onSave}){
   const [assignments,setAssignments]=useState({...markets});
@@ -2491,7 +2202,6 @@ function TrackerTab({allReps,markets}){
 
 // ─── DASHBOARD TAB ───────────────────────────────────────────────────────────
 function DashboardTab({r30Data,ytdData,history,markets,marketList,onOpenScorecard}){
-  const [expandedInsight,setExpandedInsight]=useState(null);
 
   const activeReps=useMemo(()=>{
     const src=r30Data||ytdData;
@@ -2564,53 +2274,114 @@ function DashboardTab({r30Data,ytdData,history,markets,marketList,onOpenScorecar
     }).filter(Boolean).sort((a,b)=>b.normNetVol-a.normNetVol);
   },[activeReps,markets,marketList]);
 
-  // ── system insights ──
+  // ── system insights (v2 — named, driver-attributed, action-oriented) ──
   const systemInsights=useMemo(()=>{
     if(!activeReps.length)return[];
     const insights=[];
     const topTier=activeReps.filter(r=>r.tier==="🥇 Elite"||r.tier==="🥈 Strong");
-    const highFallout=activeReps.filter(r=>r.fallout_rate>teamAvg.fallout_rate*1.3);
+    const highFallout=activeReps.filter(r=>r.fallout_rate>teamAvg.fallout_rate*1.3&&r.demo>=8);
     const lowStick=activeReps.filter(r=>r.net_issue_rate<0.6&&r.demo>=8);
     const hotReps=momentumRows.heating.filter(r=>r.composite>=4);
     const coldReps=momentumRows.cooling.filter(r=>r.composite<=-4);
 
+    // ── TOP TIER: named, with combined volume ──
     if(topTier.length>0){
       const avgStd=topTier.reduce((a,r)=>a+r.std_pct,0)/topTier.length;
-      insights.push({icon:"🏆",type:"good",text:`${topTier.length} top-tier reps averaging ${(avgStd*100).toFixed(0)}% close rate — the ceiling is strong.`,reps:topTier});
+      const totalVol=topTier.reduce((a,r)=>a+r.net_vol,0);
+      const teamTotalVol=activeReps.reduce((a,r)=>a+r.net_vol,0);
+      const shareOfVol=teamTotalVol>0?Math.round((totalVol/teamTotalVol)*100):0;
+      const names=topTier.slice(0,3).map(r=>r.rep.split(" ")[0]).join(", ");
+      insights.push({icon:"🏆",type:"good",text:`${names}${topTier.length>3?` +${topTier.length-3} more`:""} driving ${shareOfVol}% of team revenue at ${(avgStd*100).toFixed(0)}% avg close rate. Protect their calendar and lead flow.`,reps:topTier});
     }
-    if(highFallout.length>=3){
-      insights.push({icon:"⚠️",type:"warn",text:`${highFallout.length} reps have above-average fallout — closed revenue isn't all sticking.`,reps:highFallout});
+
+    // ── FALLOUT: named + dominant driver + $ lost ──
+    if(highFallout.length>=2){
+      const totalLost=highFallout.reduce((a,r)=>a+(r.cancel_vol+r.hold_vol+r.crdecline_vol),0);
+      const totalCancels=highFallout.reduce((a,r)=>a+r.cancel_cnt,0);
+      const totalHolds=highFallout.reduce((a,r)=>a+r.hold_cnt,0);
+      const totalCR=highFallout.reduce((a,r)=>a+r.crdecline_cnt,0);
+      const domDriver=totalCancels>=totalHolds&&totalCancels>=totalCR?"cancels":totalHolds>=totalCR?"holds":"credit declines";
+      const names=highFallout.slice(0,2).map(r=>r.rep.split(" ")[0]).join(" & ");
+      insights.push({icon:"⚠️",type:"warn",text:`${names}${highFallout.length>2?` + ${highFallout.length-2} others`:""} leaking ${f$(totalLost)} post-close — primary driver: ${domDriver}. ${domDriver==="credit declines"?"May be a market credit issue.":"Coach on post-sale retention."}`,reps:highFallout});
+    } else if(highFallout.length===1){
+      const r=highFallout[0];
+      const lost=r.cancel_vol+r.hold_vol+r.crdecline_vol;
+      const driver=r.cancel_cnt>=r.hold_cnt&&r.cancel_cnt>=r.crdecline_cnt?"cancels":r.hold_cnt>=r.crdecline_cnt?"holds":"credit declines";
+      insights.push({icon:"⚠️",type:"warn",text:`${r.rep.split(" ")[0]} has ${(r.fallout_rate*100).toFixed(1)}% fallout — ${f$(lost)} lost post-close, mostly ${driver}. Needs post-sale process coaching.`,reps:highFallout});
     }
+
+    // ── LOW STICK: named + $ not converting ──
     if(lowStick.length>=2){
-      insights.push({icon:"📉",type:"warn",text:`${lowStick.length} reps with low stick rates — closes are happening but not netting to revenue.`,reps:lowStick});
+      const totalAtRisk=lowStick.reduce((a,r)=>a+(r.cancel_vol+r.hold_vol+r.crdecline_vol),0);
+      const names=lowStick.slice(0,2).map(r=>r.rep.split(" ")[0]).join(" & ");
+      insights.push({icon:"📉",type:"warn",text:`${names}${lowStick.length>2?` + ${lowStick.length-2} others`:""} closing but not netting — ${f$(totalAtRisk)} at risk of not converting to real revenue. Audit deal quality.`,reps:lowStick});
     }
+
+    // ── REVENUE CONCENTRATION RISK ──
+    if(activeReps.length>=4){
+      const sorted=[...activeReps].sort((a,b)=>b.net_vol-a.net_vol);
+      const top2Vol=sorted.slice(0,2).reduce((a,r)=>a+r.net_vol,0);
+      const teamTotal=sorted.reduce((a,r)=>a+r.net_vol,0);
+      const concPct=teamTotal>0?Math.round((top2Vol/teamTotal)*100):0;
+      if(concPct>=65){
+        const names=sorted.slice(0,2).map(r=>r.rep.split(" ")[0]).join(" + ");
+        insights.push({icon:"🎯",type:"caution",text:`${names} account for ${concPct}% of all revenue — high concentration risk. If either drops off, team output craters. Build depth.`,reps:sorted.slice(0,2)});
+      }
+    }
+
+    // ── HOT STREAK: named + momentum context ──
     if(hotReps.length>0){
-      insights.push({icon:"🔥",type:"good",text:`${hotReps.length} rep${hotReps.length>1?"s are":"is"} on a hot streak over the last 30 days — momentum is building.`,reps:hotReps});
+      const names=hotReps.slice(0,2).map(r=>r.rep.split(" ")[0]).join(" & ");
+      const topHot=hotReps[0];
+      insights.push({icon:"🔥",type:"good",text:`${names}${hotReps.length>2?` + ${hotReps.length-2} more`:""} trending up over 30 days — ${topHot?`${topHot.rep.split(" ")[0]} is the hottest hand on the team`:"momentum is building"}. Increase their lead volume now.`,reps:hotReps});
     }
+
+    // ── COLD STREAK: named + urgency ──
     if(coldReps.length>0){
-      insights.push({icon:"❄️",type:"caution",text:`${coldReps.length} rep${coldReps.length>1?"s are":"is"} trending down vs YTD baseline — worth a conversation.`,reps:coldReps});
+      const names=coldReps.slice(0,2).map(r=>r.rep.split(" ")[0]).join(" & ");
+      const totalVolLost=coldReps.reduce((a,r)=>a+r.net_vol,0);
+      insights.push({icon:"❄️",type:"caution",text:`${names}${coldReps.length>2?` + ${coldReps.length-2} others`:""} declining vs YTD — ${f$(totalVolLost)} collective volume at risk. Schedule 1:1s before next lead cycle.`,reps:coldReps});
     }
+
+    // ── MARKET GAP ──
     if(marketSignals.length>=2){
       const best=marketSignals[0],worst=marketSignals[marketSignals.length-1];
       if(best.normNetVol>worst.normNetVol*1.4){
-        insights.push({icon:"🗺",type:"info",text:`${best.name} is significantly outperforming ${worst.name} per appointment — look at what's driving the gap.`,reps:[]});
+        const gap=f$(best.totalNetVol-worst.totalNetVol);
+        insights.push({icon:"🗺",type:"info",text:`${best.name} outperforming ${worst.name} by ${gap} net volume per cycle — consider redistributing leads or investigating ${worst.name} rep mix.`,reps:[]});
       }
     }
+
     return insights.slice(0,5);
   },[activeReps,teamAvg,momentumRows,marketSignals]);
 
-  // ── rep one-liner ──
+  // ── rep one-liner (v2 — numbers + driver + action) ──
   const repOneLiner=(r,ytdR)=>{
-    if(r.demo<8)return"Low sample — monitor before drawing conclusions";
-    if(r.tier==="🥇 Elite"&&r.net_issue_rate>=.80)return"Elite closer with clean, durable deals";
-    if(r.tier==="🥇 Elite")return"Elite volume producer — check stick rate for deal quality";
-    if(r.fallout_rate>teamAvg.fallout_rate*1.3&&r.std_pct>=.30)return"Strong closer but deals are falling through after the sale";
-    if(r.net_issue_rate<.60&&r.demo>=8)return"Closes are happening but not converting to real revenue";
-    if(ytdR&&r.std_pct-ytdR.std_pct>=.05)return"Close rate improving over last 30 days";
-    if(ytdR&&r.std_pct-ytdR.std_pct<=-0.05)return"Close rate slipping vs year-to-date baseline";
-    if(r.std_pct<.22)return"Below-floor close rate — demo conversion needs focus";
-    if(r.fallout_rate<teamAvg.fallout_rate*.7)return"Deal quality is excellent — closes are clean and stick";
-    return"Consistent performer across key metrics";
+    if(r.demo<8)return`Only ${r.demo} demos — too early to judge. Monitor closely.`;
+    const falloutPct=(r.fallout_rate*100).toFixed(1);
+    const nirPct=(r.net_issue_rate*100).toFixed(1);
+    const stdPct=(r.std_pct*100).toFixed(1);
+    const domDriver=r.cancel_cnt>=r.hold_cnt&&r.cancel_cnt>=r.crdecline_cnt
+      ?"cancels":r.hold_cnt>=r.crdecline_cnt?"holds":"credit declines";
+    if(r.tier==="🥇 Elite"&&r.net_issue_rate>=.80)
+      return`${stdPct}% close rate, ${nirPct}% stick — elite closer with durable revenue. Safe for any lead.`;
+    if(r.tier==="🥇 Elite")
+      return`Elite volume at ${stdPct}% close, but ${falloutPct}% fallout (${domDriver}) is eroding gains. Coach retention.`;
+    if(r.fallout_rate>teamAvg.fallout_rate*1.3&&r.std_pct>=.30)
+      return`Closes at ${stdPct}% but ${falloutPct}% fallout — ${f$(r.cancel_vol+r.hold_vol+r.crdecline_vol)} lost post-sale, mostly ${domDriver}.`;
+    if(r.net_issue_rate<.60&&r.demo>=8)
+      return`${nirPct}% stick rate — ${f$(r.cancel_vol+r.hold_vol+r.crdecline_vol)} closed but not converting. Primary leak: ${domDriver}.`;
+    if(ytdR&&r.std_pct-ytdR.std_pct>=.05)
+      return`Close rate up ${((r.std_pct-ytdR.std_pct)*100).toFixed(1)}pp over 30 days — trending in the right direction. Increase lead flow.`;
+    if(ytdR&&r.std_pct-ytdR.std_pct<=-0.05)
+      return`Close rate down ${((Math.abs(r.std_pct-ytdR.std_pct))*100).toFixed(1)}pp vs YTD — schedule a check-in before next assignment.`;
+    if(r.std_pct<.22)
+      return`${stdPct}% close rate is below floor — estimated ${f$((0.25-r.std_pct)*r.demo*r.avg_deal)} in unrealized revenue this cycle.`;
+    if(r.avg_deal>teamAvg.avg_deal*1.15)
+      return`Avg deal ${f$(r.avg_deal)} vs team ${f$(teamAvg.avg_deal)} — extracts more per appointment. Prioritize for premium slots.`;
+    if(r.fallout_rate<teamAvg.fallout_rate*.7)
+      return`${falloutPct}% fallout (team avg ${(teamAvg.fallout_rate*100).toFixed(1)}%) — clean deals that stick. Low-risk, high-trust send.`;
+    return`${stdPct}% close, ${nirPct}% stick, ${f$(r.net_vol)} net — consistent across key metrics.`;
   };
 
   const momentumLabel=c=>{
@@ -2852,6 +2623,7 @@ function DashboardTab({r30Data,ytdData,history,markets,marketList,onOpenScorecar
 
         {/* SYSTEM INSIGHTS */}
         {(()=>{
+          const [expandedInsight,setExpandedInsight]=useState(null);
           const insightStyles={
             good:   {accent:"#34d399",bg:"rgba(52,211,153,.05)",  border:"rgba(52,211,153,.15)",borderExp:"rgba(52,211,153,.40)"},
             warn:   {accent:"#fbbf24",bg:"rgba(251,191,36,.05)",  border:"rgba(251,191,36,.15)",borderExp:"rgba(251,191,36,.42)"},
@@ -3088,7 +2860,7 @@ function App(){
           {/* SUB NAV */}
           <div style={{background:"var(--bg-surface)",borderBottom:"1px solid var(--border)",padding:"10px 22px",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
             <div className="seg-control">
-              {[["r30","Rolling 30"],["ytd","Year to Date"],["trends","📈 Trends"],["deep","Deep Stats"],["snapshot","🏙 Market Snapshot"]].map(([v,label])=>(
+              {[["r30","Rolling 30"],["ytd","Year to Date"],["trends","📈 Trends"],["deep","Deep Stats"]].map(([v,label])=>(
                 <button key={v} className={`seg-btn${salesSub===v?" active":""}`} onClick={()=>setSalesSub(v)}>{label}</button>
               ))}
             </div>
@@ -3255,9 +3027,6 @@ function App(){
                   </div>
                 )}
               </div>
-            )}
-            {salesSub==="snapshot"&&(
-              <MarketSnapshotTab r30Data={r30} ytdData={ytd} markets={markets} marketList={marketList} onOpenScorecard={setScorecard}/>
             )}
           </div>
         </div>
